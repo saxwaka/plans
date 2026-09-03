@@ -16,7 +16,7 @@ export interface NormalizedError {
  *   Vilao v2  {"error":{"code",    "message",    "hint"}}
  */
 export function normalizeUpstreamError(
-  platform: Platform,
+  _platform: Platform,
   httpStatus: number,
   body: unknown,
 ): NormalizedError {
@@ -30,26 +30,47 @@ export function normalizeUpstreamError(
     message,
     httpStatus,
     upstreamRequestId: requestId,
-    retryable: isRetryable(platform, httpStatus, code),
+    retryable: isRetryable(httpStatus),
   };
 }
 
 /**
- * Retrying a 400 only burns money — the request is malformed however it is routed.
- * Retrying a 429 or a gateway failure is worth a different seller.
+ * Decides whether a different member of the pool could plausibly do better.
+ *
+ * The marketplace setting changes the usual reading of these codes. A 404 here
+ * does not mean the model exists nowhere — it means *this seller* no longer
+ * lists it, and another member may well still sell it. Listings really do
+ * vanish: two catalog snapshots an hour apart already showed one renamed. So a
+ * 404 is retried, which is the opposite of what it would mean against a single
+ * vendor's API.
+ *
+ * The codes not retried are the ones that would fail identically everywhere.
  */
-function isRetryable(platform: Platform, httpStatus: number, code: string): boolean {
-  if (httpStatus === 429) return true;
-  if (httpStatus >= 500) {
-    // CKey answers 503 for any unknown path, not just a sick upstream, so a 503
-    // on a route we did not expect is a bug on our side and not worth a retry.
-    if (platform === "ckey" && httpStatus === 503 && code === "http_503") return true;
-    return true;
+function isRetryable(httpStatus: number): boolean {
+  switch (httpStatus) {
+    // The request itself is wrong; every seller rejects it the same way, so
+    // retrying only multiplies the bill.
+    case 400:
+    case 413:
+    case 422:
+      return false;
+    // Our own upstream credential is bad. Retrying hides an operator problem
+    // behind a slower failure, so let it surface.
+    case 401:
+      return false;
+    // Balance is per platform, subscription is per listing, and the model may
+    // simply have moved to another seller — all worth trying the next member.
+    case 402:
+    case 403:
+    case 404:
+    case 408:
+    case 409:
+    case 429:
+      return true;
+    default:
+      // 5xx is the upstream's problem, not the request's.
+      return httpStatus >= 500;
   }
-  // 402 insufficient balance and 403 not-subscribed are per-account, not per-listing
-  // on CKey; on Vilao a 403 means "subscribe first", which M4 handles before retrying.
-  if (httpStatus === 403) return true;
-  return false;
 }
 
 /** Error body in the shape OpenAI clients expect. */

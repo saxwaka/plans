@@ -6,6 +6,8 @@ export interface CallOutcome {
   listingId: string;
   /** Pool that routed this call, or null when the model was passed straight through. */
   poolId?: string | null;
+  /** 1 for the first member tried; higher values are fallback attempts. */
+  attemptNo?: number;
   requestedModel: string;
   actualModel?: string;
   stream: boolean;

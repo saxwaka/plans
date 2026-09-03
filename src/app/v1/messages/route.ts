@@ -50,15 +50,21 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  if (resolved.listing.platform !== "ckey") {
+  // M4's Anthropic decision: rather than write a bidirectional translator —
+  // which would have to rewrite frames mid-stream — a pool serving this endpoint
+  // simply skips its Vilao members, since Vilao speaks only OpenAI. A mixed pool
+  // therefore still works here; only an all-Vilao pool is refused, and it says
+  // why instead of failing obscurely.
+  const listing = resolved.members.find((m) => m.platform === "ckey");
+  if (!listing) {
     return new Response(
       JSON.stringify({
         type: "error",
         error: {
           type: "invalid_request_error",
           message:
-            `Listing "${resolved.listing.display_name}" is on Vilao, which speaks only the ` +
-            "OpenAI protocol. Use /v1/chat/completions, or point this pool at CKey listings.",
+            `Pool "${requestedModel}" has only Vilao members, and Vilao speaks the OpenAI ` +
+            "protocol only. Use /v1/chat/completions, or add a CKey listing to this pool.",
         },
       }),
       { status: 400, headers: { "Content-Type": "application/json" } },
@@ -70,7 +76,7 @@ export async function POST(request: Request): Promise<Response> {
   const upstream = await fetch(`${config.ckeyBaseUrl}/messages`, {
     method: "POST",
     headers: { Authorization: `Bearer ${config.ckeyApiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ ...body, model: resolved.listing.external_id }),
+    body: JSON.stringify({ ...body, model: listing.external_id }),
     signal,
     // @ts-expect-error -- undici option, not in the DOM fetch types
     duplex: "half",
@@ -81,7 +87,7 @@ export async function POST(request: Request): Promise<Response> {
     const text = await upstream.text();
     recordRun(client.id, {
       platform: "ckey",
-      listingId: resolved.listing.id,
+      listingId: listing.id,
       poolId: resolved.poolId,
       requestedModel,
       stream: false,
@@ -97,7 +103,7 @@ export async function POST(request: Request): Promise<Response> {
 
   recordRun(client.id, {
     platform: "ckey",
-    listingId: resolved.listing.id,
+    listingId: listing.id,
     poolId: resolved.poolId,
     requestedModel,
     stream: true,

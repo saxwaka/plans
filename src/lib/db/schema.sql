@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS run (
 
 CREATE INDEX IF NOT EXISTS idx_run_created ON run(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_run_listing ON run(listing_id);
+CREATE INDEX IF NOT EXISTS idx_run_pool ON run(pool_id);
 
 -- ── M2: catalog ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS listing (

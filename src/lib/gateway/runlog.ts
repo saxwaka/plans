@@ -14,7 +14,7 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
          requested_model, actual_model, stream, tokens_in, tokens_out, cost_vnd,
          ttfb_ms, latency_ms, status, error_code, http_status,
          upstream_request_id, created_at
-       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       randomUUID(),
@@ -22,6 +22,7 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
       outcome.poolId ?? null,
       outcome.listingId,
       outcome.platform,
+      outcome.attemptNo ?? 1,
       outcome.requestedModel,
       outcome.actualModel ?? null,
       outcome.stream ? 1 : 0,
@@ -40,6 +41,9 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
 
 export interface RunRow {
   id: string;
+  attempt_no: number;
+  listing_id: string | null;
+  platform: string;
   requested_model: string;
   actual_model: string | null;
   stream: number;
@@ -56,8 +60,8 @@ export interface RunRow {
 export function recentRuns(limit = 50): RunRow[] {
   return getDb()
     .prepare<[number], RunRow>(
-      `SELECT id, requested_model, actual_model, stream, tokens_in, tokens_out,
-              cost_vnd, ttfb_ms, latency_ms, status, error_code, created_at
+      `SELECT id, attempt_no, listing_id, platform, requested_model, actual_model, stream,
+              tokens_in, tokens_out, cost_vnd, ttfb_ms, latency_ms, status, error_code, created_at
          FROM run ORDER BY created_at DESC LIMIT ?`,
     )
     .all(limit);
@@ -74,15 +78,21 @@ export function spendToday(): {
    * M5 reconciles these; until then the number is shown rather than hidden.
    */
   unpriced: number;
+  /** Billed for attempts that produced nothing — what falling back costs. */
+  wasted: number;
 } {
   const since = new Date();
   since.setHours(0, 0, 0, 0);
   const row = getDb()
-    .prepare<[string], { total: number | null; calls: number; failures: number; unpriced: number }>(
+    .prepare<
+      [string],
+      { total: number | null; calls: number; failures: number; unpriced: number; wasted: number }
+    >(
       `SELECT COALESCE(SUM(cost_vnd), 0) AS total,
               COUNT(*) AS calls,
               SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS failures,
-              SUM(CASE WHEN status = 'ok' AND cost_vnd IS NULL THEN 1 ELSE 0 END) AS unpriced
+              SUM(CASE WHEN status = 'ok' AND cost_vnd IS NULL THEN 1 ELSE 0 END) AS unpriced,
+              COALESCE(SUM(CASE WHEN status <> 'ok' THEN cost_vnd ELSE 0 END), 0) AS wasted
          FROM run WHERE created_at >= ?`,
     )
     .get(since.toISOString())!;
@@ -91,5 +101,6 @@ export function spendToday(): {
     calls: row.calls,
     failures: row.failures ?? 0,
     unpriced: row.unpriced ?? 0,
+    wasted: row.wasted ?? 0,
   };
 }

@@ -5,7 +5,7 @@ Công cụ của bạn trỏ vào gateway; key thật của hai sàn không bao 
 
 Kế hoạch: `plans/web-gom-api-vilao-ckey.md` · Khảo sát API: `docs/api-notes.md` · Mốc hiện tại: `plans/m1-duong-ong.md`
 
-## Trạng thái — M1, M2, M3 xong
+## Trạng thái — M1 → M4 xong
 
 | | |
 |---|---|
@@ -15,15 +15,37 @@ Kế hoạch: `plans/web-gom-api-vilao-ckey.md` · Khảo sát API: `docs/api-no
 | `/catalog` | 1.096 listing từ hai sàn, lọc đầy đủ |
 | `/pools` | tạo pool, thêm/bớt/đổi thứ tự thành viên |
 
-**Chưa có (M4 trở đi):** fallback tự động, chiến lược round-robin/trọng số,
-giữ chunk đầu, trần chi tiêu, pool theo luật, học chất lượng.
+M4 thêm: fallback tự động, bốn chiến lược (failover · round-robin · weighted · pinned),
+giữ chunk đầu, phân loại lỗi đáng thử lại, trần chi tiêu theo pool, đo tiền lãng phí.
 
-Hai giới hạn đang có, cố ý và đã hiện rõ trên UI:
+**Chưa có (M5 trở đi):** đối soát chi phí Vilao, trang Usage, pool theo luật, học chất lượng.
 
-- **Pool mới chỉ gọi thành viên #1.** Thành viên đó hỏng là request hỏng — fallback là M4
-- **Chi tiêu Vilao chưa tính được.** Vilao không trả cost trong response
-  (`usage.cost` luôn 0); số thật nằm ở API quản lý. Dashboard vì thế ghi
-  "Chi hôm nay (thiếu)" kèm số request chưa rõ giá, thay vì đưa ra tổng sai. M5 đối soát.
+### Fallback hoạt động thế nào
+
+Hỏng ở thành viên #1 thì tự tụt xuống #2 — nhưng chỉ khi thoả **cả hai** điều kiện:
+
+1. Lỗi **đáng thử lại**. 402, 403, 404, 429, 5xx thì có. 400 do prompt sai thì
+   **không** — sàn nào cũng hỏng như nhau, thử lại chỉ tốn tiền. 401 cũng không:
+   đó là key upstream của bạn sai, cần bạn biết chứ không nên bị che đi.
+2. **Trước** khi byte đầu tiên rời server. Đã stream ra rồi thì không rút lại được.
+
+Lưu ý 404 được thử lại, ngược với thói quen thông thường: ở marketplace nó nghĩa là
+*người bán này* không còn bán model đó, người bán khác vẫn có thể có.
+
+Response kèm `X-Gateway-Attempts`, `X-Gateway-Listing`, `X-Gateway-Pool` để biết
+request vừa rồi thực sự chạy qua đâu.
+
+### Giới hạn đang có, cố ý và hiện rõ trên UI
+
+- **Trần chi tiêu mù với Vilao.** Vilao không trả cost trong response
+  (`usage.cost` luôn 0), nên trần ngân sách chỉ chặn được chi tiêu CKey.
+  Pool nào có request Vilao chưa tính giá sẽ hiện cảnh báo đỏ ngay cạnh ô trần.
+  Dashboard ghi "Chi hôm nay (thiếu)" thay vì đưa ra tổng sai. M5 đối soát.
+- **`/v1/messages` bỏ qua thành viên Vilao.** Vilao chỉ nói OpenAI. Thay vì viết
+  bộ dịch hai chiều (phải sửa cả frame giữa stream), endpoint này chọn thành viên
+  CKey trong pool; pool toàn Vilao thì báo lỗi kèm lý do.
+- **Chưa đo chất lượng CKey.** Điểm xếp hạng dùng `success_rate` Vilao công bố;
+  listing CKey nằm ở mức "chưa kiểm chứng" 0.5 cho tới M6.
 
 ## Chạy
 

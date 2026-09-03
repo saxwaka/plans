@@ -72,3 +72,68 @@ export function instrumentSse(
 
   return upstream.pipeThrough(transform);
 }
+
+export interface HeldStream {
+  /** Rebuilds the full body: the chunk already read, then everything after it. */
+  body: ReadableStream<Uint8Array>;
+  ttfbMs: number;
+}
+
+/**
+ * Reads far enough into an upstream stream to know it is really working, while
+ * keeping the option to abandon it.
+ *
+ * Once a byte reaches the client the request is committed — there is no way to
+ * take it back and try another seller. So the first chunk is held here instead:
+ * anything that goes wrong before it (a dead connection, an error frame, a
+ * stream that ends with no data, a stall past the TTFB deadline) is still
+ * recoverable and the caller can fall back. Anything after it is not.
+ *
+ * Costs a little time-to-first-token. Worth it, because relay failures cluster
+ * at the handshake.
+ */
+export async function holdFirstChunk(
+  upstream: ReadableStream<Uint8Array>,
+  startedAt: number,
+  ttfbTimeoutMs: number,
+): Promise<HeldStream> {
+  const reader = upstream.getReader();
+
+  let first: Uint8Array;
+  try {
+    const timer = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("ttfb_timeout")), ttfbTimeoutMs).unref?.(),
+    );
+    const { value, done } = await Promise.race([reader.read(), timer]);
+    if (done || !value) throw new Error("empty_stream");
+    first = value;
+  } catch (error) {
+    reader.cancel().catch(() => {});
+    throw error;
+  }
+
+  // A 200 that opens with an error payload is still a failure — some upstreams
+  // report a dead seller in-band rather than through the status code.
+  const opening = new TextDecoder().decode(first);
+  if (opening.includes('"error"') && !opening.includes('"choices"')) {
+    reader.cancel().catch(() => {});
+    throw new Error(`upstream_error_frame: ${opening.slice(0, 200)}`);
+  }
+
+  const ttfbMs = Date.now() - startedAt;
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(first);
+    },
+    async pull(controller) {
+      const { value, done } = await reader.read();
+      if (done) controller.close();
+      else controller.enqueue(value);
+    },
+    cancel(reason) {
+      reader.cancel(reason).catch(() => {});
+    },
+  });
+
+  return { body, ttfbMs };
+}

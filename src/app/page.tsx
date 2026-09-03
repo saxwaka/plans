@@ -31,6 +31,11 @@ export default function Dashboard() {
         {today.unpriced > 0 && (
           <Stat label="Chưa rõ giá" value={String(today.unpriced)} tone="#f0a202" />
         )}
+        {/* Falling back is not free: a failed attempt can still be billed, since
+            CKey charges its per-call minimum whether or not anything came back. */}
+        {today.wasted > 0 && (
+          <Stat label="Lãng phí do fallback" value={`${vnd(today.wasted)} ₫`} tone="#f0a202" />
+        )}
       </section>
 
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
@@ -60,7 +65,14 @@ export default function Dashboard() {
                   <span style={{ color: "#f0a202" }}> → {r.actual_model}</span>
                 )}
               </Td>
-              <Td>{r.stream ? "stream" : "sync"}</Td>
+              <Td>
+                {r.stream ? "stream" : "sync"}
+                {r.attempt_no > 1 && (
+                  <span style={{ color: "#f0a202" }} title="lần thử fallback">
+                    {" "}#{r.attempt_no}
+                  </span>
+                )}
+              </Td>
               <Td>{r.tokens_in ?? "—"}</Td>
               <Td>{r.tokens_out ?? "—"}</Td>
               <Td>{vnd(r.cost_vnd)}</Td>

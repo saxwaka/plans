@@ -262,10 +262,10 @@ Ba quy tắc cứng, rút từ dữ liệu thật:
 
 | Mốc | Nội dung | Xong khi |
 |---|---|---|
-| **M1** Đường ống | `/v1/chat/completions`, CKey gọi cứng, key riêng, streaming, log | **Trỏ Cursor vào và code thật cả buổi** |
-| **M2** Catalog + Filter + `/v1/messages` | Sync hai sàn, trang duyệt, bộ lọc, endpoint Anthropic | Lọc "text, ≤500 VND, success ≥98%, ≥1000 req" và thấy số còn lại |
-| **M3** Pool | Pool tĩnh, kéo thả thứ tự, `/v1/models` trả tên pool, chuyển tiếp model lạ | Gọi `"model":"opus"` chạy qua thành viên #1 |
-| **M4** Định tuyến | Chiến lược, fallback, giữ chunk đầu, Vilao + auto-subscribe, trần chi tiêu | Rút phích thành viên #1 → request vẫn xong qua #2, client không biết |
+| ~~**M1**~~ **XONG** Đường ống | `/v1/chat/completions`, CKey gọi cứng, key riêng, streaming, log | **Trỏ Cursor vào và code thật cả buổi** |
+| ~~**M2**~~ **XONG** Catalog + Filter + `/v1/messages` | Sync hai sàn, trang duyệt, bộ lọc, endpoint Anthropic | Lọc "text, ≤500 VND, success ≥98%, ≥1000 req" và thấy số còn lại |
+| ~~**M3**~~ **XONG** Pool | Pool tĩnh, kéo thả thứ tự, `/v1/models` trả tên pool, chuyển tiếp model lạ | Gọi `"model":"opus"` chạy qua thành viên #1 |
+| ~~**M4** Định tuyến~~ | **XONG** — chiến lược, fallback, giữ chunk đầu, trần chi tiêu (Vilao + auto-subscribe đã làm ở M3) | Đạt: người bán CKey sập thật giữa lúc test, gateway tự tụt sang Vilao, client không thấy lỗi |
 | **M5** Kế toán | Đối soát tiền hai bên, trang Usage, **tiền lãng phí do fallback** | Biết hôm nay tiêu bao nhiêu, tiết kiệm bao nhiêu, phí bao nhiêu cho lần thử hỏng |
 | **M6** Pool theo luật + học chất lượng | `pool_rule`, hàng chờ duyệt, `listing_stat`, thăm dò có kiểm soát | Người bán rẻ mới tự vào hàng chờ; listing hỏng tự rơi hạng |
 

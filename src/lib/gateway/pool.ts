@@ -86,3 +86,41 @@ export function moveMember(poolId: string, listingId: string, direction: -1 | 1)
     update.run(members[index].position, poolId, members[target].listing_id);
   })();
 }
+
+export interface PoolSettings {
+  strategy: string;
+  maxAttempts: number;
+  dailyBudget: number | null;
+  monthlyBudget: number | null;
+  maxPricePerRequest: number | null;
+}
+
+export function updatePool(poolId: string, s: PoolSettings): void {
+  getDb()
+    .prepare(
+      `UPDATE pool SET strategy = ?, max_attempts = ?, daily_budget = ?,
+              monthly_budget = ?, max_price_per_request = ? WHERE id = ?`,
+    )
+    .run(s.strategy, s.maxAttempts, s.dailyBudget, s.monthlyBudget, s.maxPricePerRequest, poolId);
+}
+
+export function setMemberWeight(poolId: string, listingId: string, weight: number): void {
+  getDb()
+    .prepare("UPDATE pool_member SET weight = ? WHERE pool_id = ? AND listing_id = ?")
+    .run(weight, poolId, listingId);
+}
+
+/**
+ * Rotation counter for round-robin and weighted pools.
+ *
+ * Derived from how many calls the pool has already logged rather than kept in a
+ * module variable: process memory resets on every restart and is not shared if
+ * the server ever runs more than one worker, either of which would quietly pin
+ * a "rotating" pool to a single member.
+ */
+export function poolRotation(poolId: string): number {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS n FROM run WHERE pool_id = ?")
+    .get(poolId) as { n: number };
+  return row.n;
+}

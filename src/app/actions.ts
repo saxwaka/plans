@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { syncAll } from "@/lib/gateway/catalog";
 import { loadConfig } from "@/lib/gateway/config";
-import { addMember, createPool, deletePool, moveMember, removeMember } from "@/lib/gateway/pool";
+import {
+  addMember, createPool, deletePool, moveMember, removeMember, setMemberWeight, updatePool,
+} from "@/lib/gateway/pool";
 
 export async function syncCatalog() {
   await syncAll(loadConfig());
@@ -38,6 +40,31 @@ export async function actionMoveMember(formData: FormData) {
     String(formData.get("poolId")),
     String(formData.get("listingId")),
     Number(formData.get("direction")) as -1 | 1,
+  );
+  revalidatePath("/pools");
+}
+
+const optionalNumber = (value: FormDataEntryValue | null) => {
+  const s = String(value ?? "").trim();
+  return s === "" ? null : Number(s);
+};
+
+export async function actionUpdatePool(formData: FormData) {
+  updatePool(String(formData.get("poolId")), {
+    strategy: String(formData.get("strategy") ?? "failover"),
+    maxAttempts: Number(formData.get("maxAttempts") ?? 3),
+    dailyBudget: optionalNumber(formData.get("dailyBudget")),
+    monthlyBudget: optionalNumber(formData.get("monthlyBudget")),
+    maxPricePerRequest: optionalNumber(formData.get("maxPricePerRequest")),
+  });
+  revalidatePath("/pools");
+}
+
+export async function actionSetWeight(formData: FormData) {
+  setMemberWeight(
+    String(formData.get("poolId")),
+    String(formData.get("listingId")),
+    Number(formData.get("weight") ?? 1),
   );
   revalidatePath("/pools");
 }
