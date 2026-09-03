@@ -1,6 +1,6 @@
 # Kế hoạch: Web gom API model từ Vilao & CKey
 
-Ngày: 2026-09-02 · Trạng thái: draft v2 (đã khảo sát sơ bộ 2 nhà cung cấp)
+Ngày: 2026-09-03 · Trạng thái: draft v2 · chờ mở allowlist để chạy M0
 
 ## 1. Hai nguồn là gì
 
@@ -24,26 +24,42 @@ Hệ quả: **bỏ toàn bộ phần worker/poller/queue**. Request là đồng 
 
 *Mức tin cậy: trung bình.* Đây là đọc từ mô tả trang chủ qua search, chưa gọi API thật (xem mục 3). Nếu bạn thật sự cần sinh **video** thì cần xác nhận lại — có thể 2 site này không phải chỗ để làm việc đó, hoặc có endpoint riêng ngoài chuẩn OpenAI.
 
-## 3. Điểm chặn: không khảo sát API được từ đây
+## 3. Điểm chặn: chưa khảo sát API được (đã chọn cách A)
 
-Session này chạy trong môi trường remote có network policy chặn egress. Cả `vilao.ai` và `ckey.vn` đều bị gateway trả 403 ở bước CONNECT — không phải lỗi tạm thời, là chính sách:
+Session này chạy trong môi trường remote có network policy chặn egress. Cả `vilao.ai` và `ckey.vn` bị gateway trả 403 ngay ở bước CONNECT — chính sách của tổ chức, không phải lỗi tạm thời, và không được phép route vòng:
 
 ```
 curl: (56) CONNECT tunnel failed, response 403   (vilao.ai:443, api.vilao.ai:443)
 curl: (56) CONNECT tunnel failed, response 403   (ckey.vn:443, api.ckey.vn:443)
 ```
 
-Hai cách gỡ, chọn một:
+Đã kiểm tra lại ngày 2026-09-03: vẫn 403.
 
-- **A.** Thêm 2 domain vào allowlist của environment (Settings của Claude Code on the web), rồi mình tự curl khảo sát.
-- **B.** Bạn tự chạy 2 lệnh dưới trên máy mình rồi paste kết quả vào đây. Nhanh hơn, và **không cần đưa key cho mình**:
+**Cách A — mở allowlist.** Việc này phải làm từ phía bạn, trong phần cấu hình environment của Claude Code on the web:
+
+1. Vào Settings của environment đang dùng cho repo `saxwaka/plans`
+2. Ở mục network / egress allowlist, thêm 4 host:
+   `vilao.ai`, `api.vilao.ai`, `ckey.vn`, `api.ckey.vn`
+   (thêm cả `api.*` vì base URL của API thường nằm ở subdomain riêng)
+3. **Mở session mới** — policy được nạp lúc container khởi tạo, session đang chạy không tự nhận thay đổi
+4. Trong session mới, chạy:
 
 ```bash
-curl https://<base-url-vilao>/v1/models -H "Authorization: Bearer $VILAO_KEY" | head -c 3000
-curl https://<base-url-ckey>/v1/models  -H "Authorization: Bearer $CKEY_KEY"  | head -c 3000
+VILAO_KEY=xxx CKEY_KEY=yyy ./scripts/discover.sh
 ```
 
-Cần từ output đó: **base URL chính xác** của mỗi bên, và **schema của một object model** (có field giá không? có field context length không? có model ảnh/video không?).
+Script `scripts/discover.sh` đã có sẵn trong repo. Nó tự dò vài dạng base URL phổ biến, gọi `GET /v1/models` cho từng bên, lưu JSON thô vào `docs/samples/`, rồi in ra: số lượng model, danh sách field của một object model, và một mẫu. Key đọc từ biến môi trường, không ghi xuống đĩa; `docs/samples/*.json` đã nằm trong `.gitignore`.
+
+Bốn câu cần trả lời từ output đó:
+
+1. Base URL chính xác của mỗi bên
+2. Object model có kèm **giá** không? (`pricing`, `price`, `input_cost`...)
+3. Có kèm **context length** không?
+4. Có model **không phải text** không? (image / video / audio trong `id` hoặc `type`)
+
+Câu 2 quyết định M3 (so giá) có làm được tự động hay phải nhập giá tay. Câu 4 chốt dứt điểm nghi vấn ở mục 2.
+
+**Cách B (dự phòng)** — nếu không mở được allowlist: chạy `scripts/discover.sh` trên máy bạn rồi paste output vào chat. Kết quả như nhau, và không phải đưa key cho mình.
 
 ## 4. Vậy web này để làm gì
 
