@@ -137,117 +137,159 @@ curl -sS https://ckey.vn/v1/models -o docs/samples/ckey-models.json
 
 ---
 
-## Vilao — có HAI API riêng biệt
+## Vilao — khảo sát XONG
 
-Đây là điều quan trọng nhất về Vilao, và mình đã bỏ sót ở vòng dò đầu tiên vì chỉ soi `api.vilao.ai`.
+### Hai API riêng biệt
+
+Vòng dò đầu chỉ soi `api.vilao.ai` nên bỏ sót hẳn một nửa.
 
 | | API suy luận (v1) | API quản lý (v2) |
 |---|---|---|
 | Host | `https://api.vilao.ai/v1` | `https://vilao.ai/api/v2` |
-| Dùng để | Gọi model | Quản lý key, catalog, số dư, usage |
-| Token | LLM key `sk-...` | **Personal Access Token `pat-...`** |
-| Header | `x-api-key` | `Authorization: Bearer pat-...` |
+| Token | LLM key `sk-...` | PAT `pat-...` |
+| Header | **`x-api-key`** | **`Authorization: Bearer`** |
 
-Hai loại token **không dùng thay nhau được**. Đưa `sk-...` cho v2 sẽ nhận:
+Hai loại token không thay nhau được. PAT lấy ở `/console/user/api-tokens`, mỗi user một cái, full quyền (gồm cả ví tiền).
 
-```json
-{"error":{"code":"auth/invalid-token-type","message":"Invalid token",
-  "suggestion":"API v2 requires a Personal Access Token (pat-xxx). Get one at /console/user/api-tokens"}}
-```
-
-### Bẫy xác thực ở API v1
-
-Thứ này tốn nhiều giờ nếu không biết trước:
+### Bẫy xác thực ở v1
 
 | Endpoint v1 | `Authorization: Bearer` | `x-api-key` |
 |---|---|---|
 | `/v1/models` | 200 | 200 |
-| `/v1/chat/completions` | **401 `INVALID_API_KEY`** | đi tiếp bình thường |
+| `/v1/chat/completions` | **401 `INVALID_API_KEY`** | chạy bình thường |
 
-Cùng một key, cùng lúc. Endpoint chat **từ chối `Bearer`** và **báo sai lý do** — nói key hỏng trong khi thật ra nó không đọc header đó. Trớ trêu là chính thông báo lỗi của `/v1/models` lại quảng cáo cả hai dạng đều được.
+Endpoint chat từ chối `Bearer` và **báo sai lý do** — nói key hỏng trong khi thật ra nó không đọc header đó. Trớ trêu là chính thông báo lỗi của `/v1/models` lại quảng cáo cả hai dạng đều được. **v1 luôn dùng `x-api-key`.**
 
-**Kết luận: v1 luôn dùng `x-api-key`; v2 luôn dùng `Bearer pat-`.**
+### Model phải subscribe vào key trước
 
-### Model phải được subscribe vào key
-
-Sau khi nạp tiền, lỗi chuyển từ `INSUFFICIENT_BALANCE` sang:
+`/v1/models` liệt kê **model đã subscribe của key này**, không phải catalog — nên nó trả `{"data":null}` với key mới. Gọi model chưa subscribe:
 
 ```json
-{"error":{"code":"FORBIDDEN",
-  "message":"Please subscribe to model in the API Key: claude-sonnet-5",
-  "type":"permission_error"}}
+{"error":{"code":"FORBIDDEN","message":"Please subscribe to model in the API Key: claude-sonnet-5","type":"permission_error"}}
 ```
 
-Giống hệt với `auto`, `gpt-4o-mini`, `claude-sonnet-5`, `gemini-2.5-flash`. Đây cũng là lý do `/v1/models` trả `{"data":null}` dù đã có tiền: endpoint đó liệt kê **model đã subscribe của key này**, không phải catalog.
-
-Việc subscribe làm được bằng API v2, không cần vào web:
+Subscribe bằng API, không cần vào web:
 
 ```
-POST /api/v2/llm/keys/:id/subscriptions
-  { "provider_id": "...", "model_id": "...", "alias": "..." }
+POST /api/v2/llm/keys/:key_id/subscriptions
+  {"provider_id":"<uuid>", "model_id":"minimax-m2.7", "alias":"cheap"}
 ```
 
-### API v2 — các route đã xác minh còn sống
+Đã chạy thật, trả về bản ghi subscription đầy đủ kèm giá đã chốt tại thời điểm subscribe.
 
-Tất cả trả `401 auth/invalid-format` khi không có token, nghĩa là route tồn tại:
+### ĐÃ CHỐT: giá là VND trên 1 TRIỆU token
 
-| Route | Scope | Dùng để |
+Đây là câu treo lâu nhất, giờ có bằng chứng chặt.
+
+Gọi thật `minimax-m2.7` (rouyea, `input=50`, `output=100`, `min_price_per_request=4`):
+
+```
+prompt_tokens 914 · completion_tokens 104
+số dư: 10000 -> 9996   (trừ đúng 4 VND)
+```
+
+Bản ghi `/api/v2/llm/usage` cho:
+
+```json
+{"input_tokens":914, "output_tokens":104,
+ "input_cost":3.258467023172906, "output_cost":0.7415329768270945, "total_cost":4}
+```
+
+Hai cách suy ra cùng một kết luận:
+
+1. **Loại trừ.** Nếu giá tính trên 1K token thì request này tốn `914/1000×50 + 104/1000×100 = 56.1 VND`, phải trừ 56. Thực tế trừ 4. Loại.
+2. **Khớp tỷ lệ.** Giá thô theo 1M token là `0.0457` và `0.0104` VND, tỷ lệ **81.5% / 18.5%**. Trong bản ghi, `3.2585/4 = 81.5%` và `0.7415/4 = 18.5%` — **trùng khít**. Vậy Vilao tính giá thô theo 1M token rồi **giãn tỷ lệ lên mức sàn** `min_price_per_request`.
+
+Cách 2 là bằng chứng trực tiếp, không chỉ là loại trừ. CKey dùng cùng thang giá (cùng độ lớn cho cùng model), nên nhiều khả năng cũng là VND/1M — nhưng **chưa kiểm chứng được** vì CKey không có endpoint số dư.
+
+**Hệ quả cho `pricing.ts`:** đừng chỉ nhân token với giá. Công thức thật là
+`max(min_price_per_request, input_tokens/1e6 × price_in + output_tokens/1e6 × price_out)`.
+Với request nhỏ thì **mức sàn quyết định**, không phải token. 127 model của CKey và 247 của Vilao còn không có giá token nào cả — chỉ `per_request`.
+
+### Cảnh báo: prompt bị phồng to
+
+Prompt gửi đi khoảng 15 token, nhưng `prompt_tokens` báo về **914**, trong đó **891 là `cached_tokens`**. Có một system prompt lớn được chèn vào phía sau. Nên ước tính chi phí **không được** dựa trên độ dài prompt của người dùng — phải dựa trên `usage` trả về.
+
+Ngoài ra `usage.cost` trong response OpenAI luôn bằng **0**, không dùng được. Tiền thật nằm ở `/api/v2/llm/usage` (`total_cost`) hoặc suy ra từ chênh lệch số dư.
+
+Độ trễ thực đo: **40 giây** cho một request 104 token output.
+
+### PHÁT HIỆN LỚN NHẤT: Vilao đã công bố sẵn số liệu độ tin cậy
+
+`GET /api/v2/llm/marketplace/models` trả **604 listing, 64 người bán**, và mỗi listing kèm sẵn:
+
+```
+success_rate · total_requests · success_count · failed_count
+avg_latency_ms · avg_tps · health_check_latency_ms · health_check_tps
+avg_rating · rating_count · provider_verified · is_recommended
+last_test_score · last_test_at · last_test_status
+```
+
+**515/604 listing có số liệu thật.** Listing lớn nhất (`claude-opus-4-8` của Vilao Official) dựa trên **849.389 request**.
+
+Đây đúng là thứ M4 định tự xây từ traffic của mình. Không thể nào đo lại được quy mô đó bằng một người dùng. **M4 phải viết lại:** với Vilao thì *dùng số liệu họ công bố*; với CKey — nơi không công bố gì — thì tự đo mới là nguồn duy nhất. Thành ra là mô hình lai.
+
+Phân trang: `?page=N&page_size=100`, đọc `total_count`. Rate limit **120 req/phút** mỗi token.
+
+### Chênh giá còn dữ hơn CKey
+
+Trung vị **14.6x** trên 40 model có nhiều người bán (CKey là 4.7x). Ví dụ `claude-opus-4-8`, 12 người bán:
+
+```
+rouyea        in=  300  out= 1300   success= 99.0%  reqs= 11967
+vilao         in= 7500  out=37500   success= 99.2%  reqs=849389   verified
+duc-gpt-5-5   in=15000  out=75000   success= 84.3%  reqs=  1963
+vilao         in=125000 out=625000  success= 96.5%  reqs= 14604
+```
+
+rouyea rẻ hơn Vilao Official **25 lần** với tỷ lệ thành công gần như bằng nhau, trên gần 12.000 request — đủ mẫu để tin.
+
+Nhưng cũng chính `rouyea` có listing khác `in=1500` với **success 0.0% trên đúng 1 request**. Cùng người bán, listing khác nhau, chất lượng khác hẳn. Và nhiều listing có `reqs=0`, `success_rate=null` — chưa kiểm chứng, không phải "tốt".
+
+**Xếp hạng phải theo từng listing, không theo người bán, và phải phân biệt "chưa có dữ liệu" với "đã chứng minh là tốt".**
+
+### Model video/ảnh trên Vilao
+
+| Model | Người bán | Giá | Thành công |
+|---|---|---|---|
+| `veo-3.1-lite` | wowz | 200 VND/request | **66.2%** |
+| `veo-3.1-fast` | wowz | 250 VND/request | **71.4%** |
+| `veo-3.1-quality` | wowz | 1000 VND/request | **54.6%** |
+| `wan-t2v` | alicloud | 500 VND/1M token | 79.6% |
+| `wan2.7-i2v` | alicloud | 700 VND/1M token | 85.8% |
+
+Phân loại `type`: 542 text, 37 image, 8 embedding, 6 transcribe, **5 video**, 3 tts.
+
+**Tỷ lệ thành công của model video thấp đáng lo — 55% đến 86%.** Veo Quality hỏng gần một nửa số lần gọi, mà vẫn là loại đắt nhất. Ai định dùng video nghiêm túc cần biết điều này trước: phải có retry, và phải tính chi phí theo *số lần gọi*, không phải số clip nhận được.
+
+**So chéo hai sàn:** cùng người bán `wowz` bán Veo trên cả hai, Vilao rẻ hơn.
+
+| | Vilao (wowz) | CKey (wowztools) |
 |---|---|---|
-| `GET /api/v2/account/me` | `account:read` | Thông tin tài khoản + số dư |
-| `GET /api/v2/account/balance` | `account:read` | `balance`, `withdrawable_balance`, `used_balance` |
-| `GET /api/v2/llm/marketplace/models` | `llm:read` | **Catalog marketplace** |
-| `GET /api/v2/llm/keys` | `llm:read` | Danh sách LLM key |
-| `POST /api/v2/llm/keys` | `llm:write` | Tạo key, trả `raw_key` `sk-...` |
-| `DELETE /api/v2/llm/keys/:id` | `llm:write` | Thu hồi key |
-| `GET /api/v2/llm/keys/:id/subscriptions` | `llm:read` | Model đã gắn vào key |
-| `POST /api/v2/llm/keys/:id/subscriptions` | `llm:write` | **Subscribe model** |
-| `DELETE .../subscriptions/:sub_id` | `llm:write` | Unsubscribe |
-| `GET /api/v2/llm/usage` | `llm:read` | Lịch sử dùng, phân trang, lọc theo `days` |
-| `GET/POST/DELETE /api/v2/tokens` | `session` | Quản lý PAT (dùng JWT session, không phải PAT) |
+| Veo-3.1-Lite | 200 | 240 |
+| Veo-3.1-Fast | 250 | 300 |
+| Veo-3.1-Quality | 1000 | 1200 |
 
-Còn có nhóm `wallet` để nạp tiền bằng QR SePay (`POST /api/v2/wallet/topup`, polling `GET /api/v2/wallet/topup/:id`) — ngoài phạm vi v1 của app.
+CKey đắt hơn đều **20%**. Đây chính là kiểu so sánh mà app cần làm tự động.
 
-Rate limit: **120 req/phút mỗi token**, vượt thì 429.
+### Trường dữ liệu hữu ích khác
 
-Envelope thành công của v2: `{"success":true,"data":...}`. Envelope lỗi: `{"error":{"code","message","hint"}}` — **khác cả v1 lẫn CKey**, nên hàm chuẩn hoá lỗi phải đọc được ba dạng.
+`GET /api/v2/llm/keys` trả về mỗi key kèm `rate_limit_rpm`, `total_requests`, `total_spent`, `daily_budget`, `monthly_budget`, `active`, `expires_at`, `favorite`. Có sẵn hạn mức ngân sách theo ngày/tháng — không cần tự làm cảnh báo chi tiêu.
 
-### Sửa lại kết luận trước
-
-Vòng trước mình viết "không lấy được catalog Vilao qua API, phải scrape web". **Sai.** `GET /api/v2/llm/marketplace/models` làm đúng việc đó. Kết luận cũ đến từ chỗ chỉ dò `api.vilao.ai` mà không biết có `vilao.ai/api/v2`.
-
-### Còn chờ
-
-**Một PAT.** Tạo ở `https://vilao.ai/console/user/api-tokens`. Mỗi user chỉ có một token, full quyền, chỉ hiện một lần lúc tạo.
-
-Có PAT thì làm được hết bằng script, không cần bấm web:
-1. `GET /api/v2/llm/marketplace/models` → catalog thật, biết schema và giá
-2. `GET /api/v2/llm/keys` → lấy `id` của key `sk-...` hiện có
-3. `POST /api/v2/llm/keys/:id/subscriptions` → subscribe một model rẻ
-4. Gọi `api.vilao.ai/v1/chat/completions` với `x-api-key` → xong M0 phía Vilao
-5. `GET /api/v2/account/balance` trước và sau → **chốt bội số giá bằng cách đối chiếu số dư**
-
-Bước 5 là cách sạch nhất để trả lời câu "VND trên bao nhiêu token", vì Vilao có endpoint số dư còn CKey thì không.
+`GET /api/v2/llm/usage` mỗi bản ghi có `input_cost`, `output_cost`, `total_cost`, `latency_ms`, `success`, `actual_model`, `provider_id`, `stream`, `request_type`. Đây là nguồn chuẩn cho trang Usage — không cần tự ghi lại.
 
 ---
 
 ## CKey — key không hợp lệ (đã loại trừ nguyên nhân mạng)
 
-Egress tới `api.xah.io` đã mở. Test trên **cả hai host**, cả hai dạng key:
+Egress tới `api.xah.io` đã mở. Test **cả hai host**, cả hai dạng key:
 
 | Host | Key thô | `sk-` + key |
 |---|---|---|
 | `ckey.vn/v1` | 401 invalid | 401 invalid |
 | `api.xah.io/v1` | 401 invalid | 401 invalid |
 
-```json
-{"error":{"message":"The API key is invalid.",
-  "request_id":"req_fd5b0187f920230924cd5443",
-  "type":"authentication_error"}}
-```
-
-Trước đây chưa phân biệt được "key sai" với "gọi nhầm host". **Giờ đã rõ: không phải host.**
-
-Bằng chứng phụ cho thấy key *có* được đọc: đổi tên header làm thông báo lỗi đổi theo.
+Host chính thức cũng từ chối, nên **không phải lỗi host**. Bằng chứng phụ cho thấy key *có* được đọc — đổi header thì thông báo đổi theo:
 
 | Header | Thông báo |
 |---|---|
@@ -256,13 +298,11 @@ Bằng chứng phụ cho thấy key *có* được đọc: đổi tên header l�
 | `api-key: <k>` | "A valid API key is required." |
 | `Authorization: <k>` (thiếu Bearer) | "A valid API key is required." |
 
-"Invalid" = tìm thấy key rồi tra cứu và loại. "Required" = không tìm thấy key nào. Vậy header đúng, chuỗi key mới sai.
+"Invalid" = tìm thấy key rồi loại. "Required" = không thấy key nào. Vậy header đúng, chuỗi key sai.
 
-**Cần: copy lại key từ dashboard CKey.** Chuỗi đã thử là 48 ký tự hex không tiền tố; docs của họ dùng dạng `sk-...`.
+**Cần copy lại key từ dashboard CKey.** Chuỗi đã thử là 48 ký tự hex không tiền tố; docs của họ dùng `sk-...`.
 
-### Hai host, cùng một backend
-
-`ckey.vn/v1` và `api.xah.io/v1` trả **đúng cùng 498 model, danh sách trùng khít**. Để `api.xah.io` làm mặc định vì đó là base URL chính thức, cho đổi ở Settings.
+`ckey.vn/v1` và `api.xah.io/v1` trả đúng cùng 498 model, danh sách trùng khít — cùng backend.
 
 ---
 
@@ -274,21 +314,19 @@ Vilao v1   : {"error":{"code",    "message",    "type"}}
 Vilao v2   : {"error":{"code",    "message",    "hint"|"suggestion"}}
 ```
 
-`provider.ts` cần hàm chuẩn hoá đọc được cả ba.
+Cần hàm chuẩn hoá đọc được cả ba.
 
 ## Catalog thay đổi liên tục
 
-Đo thật, hai snapshot CKey cách nhau khoảng một giờ: vẫn 498 model, nhưng `tdsang1999/gemini-3.7-flash` biến mất và `tdsang1999/gemini-3.7-flash-high` xuất hiện.
-
-Người bán đổi listing trong vòng vài giờ. Khi sync **không xoá cứng** listing cũ — đánh dấu `stale` để lịch sử `run` và số liệu tin cậy không mồ côi.
+Hai snapshot CKey cách nhau khoảng một giờ: vẫn 498 model, nhưng `tdsang1999/gemini-3.7-flash` biến mất, `tdsang1999/gemini-3.7-flash-high` xuất hiện. Khi sync **không xoá cứng** — đánh dấu `stale` để lịch sử `run` không mồ côi.
 
 ---
 
 ## Việc còn lại của M0
 
-1. **Vilao** — tạo PAT ở `/console/user/api-tokens`, rồi mình chạy trọn bộ 5 bước ở trên bằng script
-2. **CKey** — copy lại API key cho đúng
+1. **CKey** — copy lại API key cho đúng. Đây là thứ duy nhất còn chặn
+2. Thử một model video (Veo hoặc wan-t2v) xem gọi bằng endpoint nào, trả link hay base64 — tốn khoảng 200–250 VND, chưa làm vì bạn dặn tiết kiệm
 
 ## Bảo mật
 
-Các key đã dán vào khung chat nằm trong transcript session này. Mình **không** ghi xuống đĩa và **không** commit (đã grep toàn repo). Vẫn nên **thu hồi và tạo lại** sau khi xong. PAT của Vilao là **full quyền, gồm cả ví tiền** — cẩn thận hơn nữa với nó; từ giờ truyền qua biến môi trường thay vì dán vào chat.
+Các key và PAT đã dán vào chat nên nằm trong transcript session này. Mình **không** ghi xuống đĩa và **không** commit (đã grep toàn repo). **PAT là full quyền gồm cả ví tiền — nên thu hồi ngay** ở `/console/user/api-tokens` sau khi xong. Từ giờ truyền qua biến môi trường.
