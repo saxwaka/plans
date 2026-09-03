@@ -1,6 +1,6 @@
 # M0 — Kết quả khảo sát API (2026-09-03)
 
-Khảo sát thật bằng curl, không đoán. Vilao còn dở vì chưa có key.
+Khảo sát thật bằng curl, không đoán. Cập nhật lần 2 sau khi có key của cả hai bên.
 
 ---
 
@@ -137,40 +137,102 @@ curl -sS https://ckey.vn/v1/models -o docs/samples/ckey-models.json
 
 ---
 
-## Vilao — chặn ở chỗ cần key
+## Vilao — key hợp lệ, nhưng tài khoản hết tiền
 
-| Hạng mục | Kết quả |
-|---|---|
-| Base URL | `https://api.vilao.ai/v1` — xác nhận qua 401 có cấu trúc |
-| Xác thực | `Authorization: Bearer sk-xxx` **hoặc** `x-api-key: sk-xxx` |
-| `/v1/models` | 401 `MISSING_AUTH` — bắt buộc có key, không public như CKey |
-| `/v1/chat/completions` | 404 khi GET — nhiều khả năng route chỉ nhận POST |
-| OpenAPI spec | Không có (`/openapi.json`, `/swagger.json` đều trả về SPA shell) |
-| `api.vilao.ai/docs` | SPA tiêu đề "LLM Monitor", nội dung render bằng JS |
-| Dữ liệu public | **Không có.** `vilao.ai` là Next.js client-render toàn bộ; `/models`, `/pricing`, `/api/models` đều trả HTML rỗng, không nhúng dữ liệu |
+Đã thử với key thật (2026-09-03).
 
-Body lỗi nguyên văn:
+### Key có thật
+
+Phép thử đối chứng: gọi `/v1/models` bằng một key bịa ra trả về `401 INVALID_API_KEY`; bằng key thật trả về `200`. Vậy key được server nhận.
+
+### Bẫy xác thực — hai endpoint không giống nhau
+
+Đây là thứ tốn nhiều giờ nếu không biết trước:
+
+| Endpoint | `Authorization: Bearer` | `x-api-key` |
+|---|---|---|
+| `/v1/models` | 200 | 200 |
+| `/v1/chat/completions` | **401 `INVALID_API_KEY`** | 402 `INSUFFICIENT_BALANCE` |
+
+Cùng một key, cùng lúc. Endpoint chat **từ chối `Bearer`** và báo sai lý do — nói key hỏng trong khi thật ra nó chỉ không đọc header đó. Trớ trêu là chính thông báo lỗi của `/v1/models` lại quảng cáo cả hai dạng đều được.
+
+**Kết luận: dùng `x-api-key` cho Vilao, đừng dùng `Bearer`.**
+
+### Tài khoản chưa nạp tiền
 
 ```json
-{"error":{"code":"MISSING_AUTH",
-  "message":"Missing authentication. Provide 'Authorization: Bearer sk-xxx' or 'x-api-key: sk-xxx'.",
+{"error":{"code":"INSUFFICIENT_BALANCE",
+  "message":"Insufficient balance to complete the request.",
+  "type":"insufficient_quota"}}
+```
+
+Đây gần như chắc chắn cũng là lý do `/v1/models` trả `{"data":null,"object":"list"}` — chưa có tiền thì chưa có model nào gắn vào key. Trang chủ Vilao nói người dùng *chọn model trên Marketplace*, nên danh sách model là **theo từng key**, không phải catalog chung như CKey.
+
+Chưa trả lời được, phải nạp tiền rồi chọn model mới biết: schema object model ra sao, có kèm giá không, đơn vị VND hay USD, có phải marketplace nhiều người bán không, có model ảnh/video không.
+
+### Bề mặt API rất hẹp
+
+Chỉ có hai route. Tất cả những cái sau đều `404 {"error":"not found","path":...}`:
+
+```
+/v1/me  /v1/user  /v1/account  /v1/balance  /v1/credits
+/v1/usage  /v1/key  /v1/marketplace  /v1/catalog  /v1/models/list
+```
+
+Không có endpoint xem số dư. Muốn hiện số dư trong app thì phải scrape web, hoặc bỏ tính năng đó.
+
+---
+
+## CKey — key chưa dùng được từ đây
+
+Key bạn gửi bị `ckey.vn/v1/chat/completions` từ chối, thử cả hai dạng có và không có tiền tố `sk-`:
+
+```json
+{"error":{"message":"The API key is invalid.",
+  "request_id":"req_bd1988402061eef07b47b350",
   "type":"authentication_error"}}
 ```
 
-**Cần một key Vilao để đi tiếp.** Với key, chạy:
+Hai khả năng, chưa phân biệt được:
 
+1. Key chỉ hợp lệ với **base URL chính thức `api.xah.io`**, còn `ckey.vn/v1` là mirror chỉ phục vụ `/v1/models` công khai. `api.xah.io` **vẫn bị chặn egress** (403 ở CONNECT), nên không kiểm chứng được từ đây.
+2. Key sai hoặc đã hết hạn.
+
+Cách phân biệt: chạy trên máy bạn
 ```bash
-VILAO_KEY=sk-xxx VILAO_BASE=https://api.vilao.ai/v1 ./scripts/discover.sh
+curl https://api.xah.io/v1/chat/completions   -H "Authorization: Bearer sk-YOUR_KEY" -H 'Content-Type: application/json'   -d '{"model":"dungcsnd113/claude-opus-5","max_tokens":16,
+       "messages":[{"role":"user","content":"Say OK"}]}'
+```
+Nếu chạy được thì là khả năng 1, và app phải trỏ vào `api.xah.io`.
+
+Lưu ý: `ckey.vn/v1/models` trả 497–498 model **bất kể có key hay không, key đúng hay sai** — endpoint này không kiểm tra xác thực. Đừng dùng nó để test key.
+
+### Envelope lỗi hai bên khác nhau
+
+```
+CKey  : {"error":{"message", "request_id", "type"}}
+Vilao : {"error":{"code",    "message",    "type"}}
 ```
 
-Câu cần trả lời: object model có `pricing` không, đơn vị là VND hay USD, có phải cũng là marketplace nhiều người bán không, và có model ảnh/video không.
+CKey có `request_id` (hữu ích khi báo lỗi cho người bán), Vilao có `code` máy đọc được. `pricing.ts`/`provider.ts` cần hàm chuẩn hoá lỗi đọc được cả hai.
+
+### Catalog thay đổi liên tục
+
+Đo thật, hai snapshot cách nhau khoảng một giờ: vẫn 498 model, nhưng `tdsang1999/gemini-3.7-flash` biến mất và `tdsang1999/gemini-3.7-flash-high` xuất hiện.
+
+Người bán đổi listing trong vòng vài giờ. Vì vậy khi sync **không được xoá cứng** listing cũ — đánh dấu `stale` để lịch sử `run` và số liệu tin cậy không bị mồ côi.
 
 ---
 
 ## Việc còn lại của M0
 
-1. Key Vilao → chạy `scripts/discover.sh`
-2. Chốt bội số giá của CKey bằng một request thật + đối chiếu số dư
-3. Thử một model Veo xem gọi bằng endpoint nào, trả về dạng gì
-4. Xem `ckey.vn/leaderboard` có phải xếp hạng độ tin cậy người bán không
-5. Xin mở egress cho `api.xah.io` (base URL chính thức của CKey)
+1. **Nạp tiền Vilao**, chọn vài model trên Marketplace → chạy lại `/v1/models` để lấy schema thật
+2. **Kiểm chứng key CKey** với `api.xah.io` bằng lệnh curl ở trên (chạy trên máy bạn)
+3. Xin mở egress cho `api.xah.io`
+4. Chốt bội số giá CKey bằng một request thật + đối chiếu số dư — **vẫn chưa làm được**, cả hai key đều chưa gọi thành công
+5. Thử một model Veo xem gọi bằng endpoint nào, trả về link hay base64
+6. Xem `ckey.vn/leaderboard` có phải xếp hạng độ tin cậy người bán không
+
+## Bảo mật
+
+Hai key được dán thẳng vào khung chat, nên chúng nằm trong transcript của session này. Mình **không** ghi chúng xuống đĩa và **không** commit (đã kiểm tra bằng grep toàn repo). Dù vậy nên **thu hồi và tạo key mới** sau khi khảo sát xong; từ giờ truyền key qua biến môi trường thay vì dán vào chat.
