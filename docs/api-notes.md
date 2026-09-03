@@ -355,6 +355,30 @@ Người bán đổi giá ngay giữa phiên làm việc. Củng cố kết lu�
 
 Hai sàn **bổ sung cho nhau chứ không thay thế nhau**: CKey mở catalog cho ai cũng xem được nhưng mù về chất lượng; Vilao bắt xác thực nhưng cho biết cái nào thật sự chạy được.
 
+## Endpoint hai sàn hỗ trợ — đã probe và gọi thật
+
+| Endpoint | CKey | Vilao |
+|---|---|---|
+| `/v1/chat/completions` | ✓ | ✓ |
+| `/v1/messages` (Anthropic) | ✓ | **✓** — trước đây kết luận nhầm là không |
+| `/v1/embeddings` | ✓ | ✓ (1536 chiều với text-embedding-3-small) |
+| `/v1/completions` | ✓ | ✓ |
+| `/v1/responses` | ✓ | ✓ |
+| `/v1/moderations` | ✓ | 404 |
+| `/v1/rerank` | ✓ | 404 |
+
+Kết luận cũ "Vilao chỉ nói OpenAI" đến từ chữ trên trang chủ, không từ probe. Gọi
+thật `/v1/messages` qua Vilao trả đúng envelope Anthropic: `content: [{type:"text"}]`,
+`stop_reason: end_turn`, stream đủ 6 loại event. **Không cần bộ dịch.**
+
+Điểm yếu thật của Vilao ở đây: **usage trong Anthropic streaming không ổn định** —
+có lần `message_start` và `message_delta` đều `input_tokens: 0, output_tokens: 0`,
+lần khác lại đủ `869/2`. CKey thì `message_start` luôn 0/0 nhưng `message_delta`
+luôn có số thật kèm `x_ckey.cost`.
+
+Hệ quả cho code: gộp usage giữa các frame phải lấy **max**, không lấy frame sau —
+frame sau có thể là số 0 tường minh đè lên số thật của frame trước.
+
 ## Ba envelope lỗi khác nhau
 
 ```

@@ -13,8 +13,8 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
          id, client_key_id, pool_id, listing_id, platform, attempt_no,
          requested_model, actual_model, stream, tokens_in, tokens_out, cost_vnd,
          ttfb_ms, latency_ms, status, error_code, http_status,
-         upstream_request_id, kind, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         upstream_request_id, kind, endpoint, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       randomUUID(),
@@ -36,6 +36,7 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
       outcome.httpStatus ?? null,
       outcome.upstreamRequestId ?? null,
       outcome.kind ?? "live",
+      outcome.endpoint ?? "chat",
       new Date().toISOString(),
     );
 }
@@ -44,6 +45,7 @@ export interface RunRow {
   id: string;
   attempt_no: number;
   kind: string;
+  endpoint: string | null;
   pool_id: string | null;
   listing_id: string | null;
   platform: string;
@@ -63,7 +65,7 @@ export interface RunRow {
 export function recentRuns(limit = 50): RunRow[] {
   return getDb()
     .prepare<[number], RunRow>(
-      `SELECT id, attempt_no, kind, pool_id, listing_id, platform, requested_model, actual_model, stream,
+      `SELECT id, attempt_no, kind, endpoint, pool_id, listing_id, platform, requested_model, actual_model, stream,
               tokens_in, tokens_out, cost_vnd, ttfb_ms, latency_ms, status, error_code, created_at
          FROM run ORDER BY created_at DESC LIMIT ?`,
     )

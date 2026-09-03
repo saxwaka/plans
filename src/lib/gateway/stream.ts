@@ -1,35 +1,46 @@
-import type { UpstreamUsage } from "./types";
+import { extractUsage, mergeUsage, type NormalizedUsage } from "./usage";
 
 export interface StreamResult {
-  usage?: UpstreamUsage;
+  usage: NormalizedUsage;
   /** Model the upstream says it actually served; a mismatch is worth flagging. */
   actualModel?: string;
   ttfbMs?: number;
   latencyMs: number;
 }
 
+export interface InstrumentOptions {
+  /**
+   * Given the usage accumulated so far, returns fields to merge into the usage
+   * object of the frame that carries it — how the gateway adds a normalised
+   * `cost` for callers. Return null to leave the frame untouched.
+   */
+  augmentUsage?: (usage: NormalizedUsage) => Record<string, unknown> | null;
+}
+
 /**
- * Passes an SSE body through byte-for-byte while sniffing it for the usage frame.
+ * Forwards an SSE body while reading it for usage and the served model.
  *
- * Verified against CKey: usage arrives on its own, without the client asking for
- * stream_options.include_usage, in the frame just before [DONE]:
- *   data: {"choices":[],"usage":{...,"x_ckey":{"cost":23.4,...}}}
- * That frame carries an empty choices array, so it must be forwarded untouched —
- * dropping it would be both wrong and pointless.
+ * Frames are re-emitted line by line rather than chunk by chunk. Every line
+ * goes out byte-identical except one: the frame carrying `usage`, which may be
+ * rewritten to include a cost the caller can rely on. The upstreams never put
+ * usage anywhere but the tail (OpenAI: the frame before [DONE]; Anthropic: the
+ * message_delta event), so buffering to line boundaries costs nothing visible.
  *
- * onFinish fires at most once, and never from inside transform(), so logging
- * stays off the hot path. Pass the request signal so a client that hangs up
- * mid-stream is still recorded — flush() never runs on an abandoned stream.
+ * onFinish fires at most once and never inside transform(), keeping logging
+ * off the hot path. Pass the request signal so an abandoned stream is still
+ * recorded — flush() never runs on one.
  */
 export function instrumentSse(
   upstream: ReadableStream<Uint8Array>,
   startedAt: number,
   onFinish: (result: StreamResult) => void,
   abortSignal?: AbortSignal,
+  options: InstrumentOptions = {},
 ): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
   let pending = "";
-  let usage: UpstreamUsage | undefined;
+  let usage: NormalizedUsage = {};
   let actualModel: string | undefined;
   let ttfbMs: number | undefined;
   let settled = false;
@@ -40,57 +51,86 @@ export function instrumentSse(
     onFinish({ usage, actualModel, ttfbMs, latencyMs: Date.now() - startedAt });
   };
 
+  const emitLine = (line: string, controller: TransformStreamDefaultController<Uint8Array>) => {
+    if (!line.startsWith("data:")) {
+      controller.enqueue(encoder.encode(line + "\n"));
+      return;
+    }
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]") {
+      controller.enqueue(encoder.encode(line + "\n"));
+      return;
+    }
+
+    // Most frames carry neither field; skip the parse unless one might be present.
+    const interesting = payload.includes('"usage"') || (!actualModel && payload.includes('"model"'));
+    if (!interesting) {
+      controller.enqueue(encoder.encode(line + "\n"));
+      return;
+    }
+
+    let frame: Record<string, unknown>;
+    try {
+      frame = JSON.parse(payload);
+    } catch {
+      // A partial frame mid-stream is normal; forward it as-is.
+      controller.enqueue(encoder.encode(line + "\n"));
+      return;
+    }
+
+    if (typeof frame.model === "string") actualModel ??= frame.model;
+    // Anthropic nests the served model under message_start.message.
+    const message = frame.message as Record<string, unknown> | undefined;
+    if (typeof message?.model === "string") actualModel ??= message.model;
+
+    const seen = extractUsage(frame.usage ? frame : message ? { usage: message.usage } : {});
+    const hasUsage = seen.tokensIn !== undefined || seen.tokensOut !== undefined || seen.upstreamCost !== undefined;
+    if (!hasUsage) {
+      controller.enqueue(encoder.encode(line + "\n"));
+      return;
+    }
+
+    usage = mergeUsage(usage, seen);
+    const extra = options.augmentUsage?.(usage);
+    if (extra && frame.usage && typeof frame.usage === "object") {
+      frame.usage = { ...(frame.usage as Record<string, unknown>), ...extra };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n`));
+    } else {
+      controller.enqueue(encoder.encode(line + "\n"));
+    }
+  };
+
   const transform = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
       ttfbMs ??= Date.now() - startedAt;
-      controller.enqueue(chunk);
-
       pending += decoder.decode(chunk, { stream: true });
       let newline: number;
       while ((newline = pending.indexOf("\n")) !== -1) {
-        const line = pending.slice(0, newline).trim();
+        const line = pending.slice(0, newline);
         pending = pending.slice(newline + 1);
-        if (!line.startsWith("data:")) continue;
-
-        const payload = line.slice(5).trim();
-        if (!payload || payload === "[DONE]") continue;
-        // Most frames carry neither, so skip the parse unless one is present.
-        if (!payload.includes('"usage"') && actualModel) continue;
-        try {
-          const frame = JSON.parse(payload) as { usage?: UpstreamUsage; model?: string };
-          if (frame.usage) usage = frame.usage;
-          actualModel ??= frame.model;
-        } catch {
-          // A partial frame is normal mid-stream; the next chunk completes it.
-        }
+        emitLine(line.replace(/\r$/, ""), controller);
       }
     },
-    flush: finish,
+    flush(controller) {
+      if (pending) controller.enqueue(encoder.encode(pending));
+      finish();
+    },
   });
 
   abortSignal?.addEventListener("abort", finish, { once: true });
-
   return upstream.pipeThrough(transform);
 }
 
 export interface HeldStream {
-  /** Rebuilds the full body: the chunk already read, then everything after it. */
   body: ReadableStream<Uint8Array>;
   ttfbMs: number;
 }
 
 /**
  * Reads far enough into an upstream stream to know it is really working, while
- * keeping the option to abandon it.
- *
- * Once a byte reaches the client the request is committed — there is no way to
- * take it back and try another seller. So the first chunk is held here instead:
- * anything that goes wrong before it (a dead connection, an error frame, a
- * stream that ends with no data, a stall past the TTFB deadline) is still
- * recoverable and the caller can fall back. Anything after it is not.
- *
- * Costs a little time-to-first-token. Worth it, because relay failures cluster
- * at the handshake.
+ * keeping the option to abandon it. Once a byte reaches the client the request
+ * is committed; anything that fails before the first chunk — dead connection,
+ * in-band error frame, empty body, TTFB stall — can still fall back.
  */
 export async function holdFirstChunk(
   upstream: ReadableStream<Uint8Array>,
@@ -112,10 +152,8 @@ export async function holdFirstChunk(
     throw error;
   }
 
-  // A 200 that opens with an error payload is still a failure — some upstreams
-  // report a dead seller in-band rather than through the status code.
   const opening = new TextDecoder().decode(first);
-  if (opening.includes('"error"') && !opening.includes('"choices"')) {
+  if (opening.includes('"error"') && !opening.includes('"choices"') && !opening.includes('"type":"message_start"')) {
     reader.cancel().catch(() => {});
     throw new Error(`upstream_error_frame: ${opening.slice(0, 200)}`);
   }

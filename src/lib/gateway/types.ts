@@ -10,6 +10,8 @@ export interface CallOutcome {
   attemptNo?: number;
   /** 'live' for a client's request, 'probe' for a verify sweep. */
   kind?: "live" | "probe";
+  /** API surface, e.g. "chat", "messages", "embeddings", "responses". */
+  endpoint?: string;
   requestedModel: string;
   actualModel?: string;
   stream: boolean;

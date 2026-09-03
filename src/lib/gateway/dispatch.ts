@@ -1,7 +1,6 @@
 import { getDb } from "../db";
 import type { GatewayConfig } from "./config";
 import type { Listing } from "./catalog";
-import * as ckey from "./upstream/ckey";
 import * as vilao from "./upstream/vilao";
 
 export interface Dispatched {
@@ -43,6 +42,47 @@ async function ensureSubscribed(config: GatewayConfig, listing: Listing): Promis
     .run(listing.id, subId ?? null, new Date().toISOString());
 }
 
+/**
+ * Sends a request for any /v1 path to whichever platform owns the listing.
+ *
+ * Both platforms speak the OpenAI and Anthropic protocols on the same paths, so
+ * the gateway does not translate — it rewrites the model name to the listing's
+ * upstream id, sets the right credential header (Bearer on CKey, x-api-key on
+ * Vilao, which rejects Bearer with a misleading INVALID_API_KEY), and forwards.
+ */
+export async function dispatchTo(
+  config: GatewayConfig,
+  listing: Listing,
+  path: string,
+  body: Record<string, unknown>,
+  signal: AbortSignal,
+  extraHeaders: Record<string, string> = {},
+): Promise<Dispatched> {
+  const payload = { ...body, model: listing.external_id };
+  const startedAt = Date.now();
+
+  let url: string;
+  let auth: Record<string, string>;
+  if (listing.platform === "vilao") {
+    await ensureSubscribed(config, listing);
+    url = `${config.vilaoBaseUrl}${path}`;
+    auth = { "x-api-key": config.vilaoApiKey };
+  } else {
+    url = `${config.ckeyBaseUrl}${path}`;
+    auth = { Authorization: `Bearer ${config.ckeyApiKey}` };
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { ...auth, "Content-Type": "application/json", ...extraHeaders },
+    body: JSON.stringify(payload),
+    signal,
+    // @ts-expect-error -- undici option, not in the DOM fetch types
+    duplex: "half",
+  });
+  return { response, startedAt };
+}
+
 /** Sends one chat request to whichever platform owns the listing. */
 export async function dispatchChat(
   config: GatewayConfig,
@@ -50,13 +90,7 @@ export async function dispatchChat(
   body: Record<string, unknown>,
   signal: AbortSignal,
 ): Promise<Dispatched> {
-  const payload = { ...body, model: listing.external_id };
-
-  if (listing.platform === "vilao") {
-    await ensureSubscribed(config, listing);
-    return vilao.chatCompletions(config, payload, signal);
-  }
-  return ckey.chatCompletions(config, payload, signal);
+  return dispatchTo(config, listing, "/chat/completions", body, signal);
 }
 
 export function getListing(id: string): Listing | undefined {

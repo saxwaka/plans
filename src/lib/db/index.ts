@@ -19,6 +19,8 @@ const ADDITIONS: [table: string, column: string, definition: string][] = [
   ["pool", "auto_admit", "INTEGER NOT NULL DEFAULT 0"],
   // 'live' for real traffic, 'probe' for a verify run — same evidence, different money.
   ["run", "kind", "TEXT NOT NULL DEFAULT 'live'"],
+  // Which API surface served the run: chat, messages, embeddings, responses…
+  ["run", "endpoint", "TEXT"],
 ];
 
 function migrate(handle: Database.Database): void {

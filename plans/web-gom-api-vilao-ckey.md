@@ -271,7 +271,7 @@ Ba quy tắc cứng, rút từ dữ liệu thật:
 
 **M1 có giá trị ngay.** M3 là lúc pool trả công. M4 khó nhất. M6 là chỗ khác biệt so với mọi relay có sẵn.
 
-`/v1/messages` gộp vào M2 vì lúc đó còn thuần CKey — CKey hỗ trợ sẵn ở upstream nên chỉ là chuyển tiếp, **không phải dịch envelope**. Sang M4 khi Vilao vào cuộc thì phải quyết: viết bộ dịch Anthropic↔OpenAI (kể cả giữa stream), hay **cấm pool trộn Anthropic với thành viên Vilao**. Ghi sẵn để đừng vấp.
+`/v1/messages`: quyết định "viết bộ dịch hay cấm trộn Vilao" hoá ra **không cần** — probe thật cho thấy Vilao cũng phục vụ Anthropic protocol trên cùng đường dẫn. Cả hai sàn đều là passthrough. Bài học: kết luận về năng lực của sàn phải đến từ probe, không từ chữ trên trang chủ.
 
 ## 9. Rủi ro
 

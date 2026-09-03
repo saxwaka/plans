@@ -9,8 +9,9 @@ Kế hoạch: `plans/web-gom-api-vilao-ckey.md` · Khảo sát API: `docs/api-no
 
 | | |
 |---|---|
-| `/v1/chat/completions` | stream + sync, giải tên pool, log tiền từng request |
-| `/v1/messages` | giao thức Anthropic, cho Claude Code — **chỉ chạy listing CKey** |
+| `/v1/chat/completions` | stream + sync, tool calling, vision |
+| `/v1/messages` | giao thức Anthropic — **cả hai sàn đều phục vụ**, không dịch |
+| `/v1/embeddings` · `/v1/completions` · `/v1/responses` · `/v1/moderations` · `/v1/rerank` | cùng một đường ống: pool, fallback, log tiền |
 | `/v1/models` | pool đứng trước, rồi tới listing thô |
 | `/catalog` | 1.096 listing từ hai sàn, lọc đầy đủ |
 | `/pools` | tạo pool, thành viên, chiến lược, trần chi tiêu, luật tự nhận |
@@ -107,9 +108,9 @@ request vừa rồi thực sự chạy qua đâu.
   trần ngân sách chưa thấy khoản chi này — pool nào còn request chưa tính giá sẽ
   hiện cảnh báo đỏ cạnh ô trần. Ép đối soát ngay bằng `npm run reconcile` hoặc
   nút ở trang `/usage`.
-- **`/v1/messages` bỏ qua thành viên Vilao.** Vilao chỉ nói OpenAI. Thay vì viết
-  bộ dịch hai chiều (phải sửa cả frame giữa stream), endpoint này chọn thành viên
-  CKey trong pool; pool toàn Vilao thì báo lỗi kèm lý do.
+- **Vilao báo token cho Anthropic streaming không ổn định** — có lúc `0/0` ở cả
+  `message_start` và `message_delta`. Khi đó `usage.cost_source` là `floor`
+  (chỉ tính được mức sàn), đối soát sẽ sửa lại sau vài giây.
 - **Chất lượng đầu ra không đo được.** `success_rate` chỉ nói request có trả về
   hay không, **không** nói trả về có tốt không. Người bán rẻ hoàn toàn có thể
   lặng lẽ phục vụ model yếu hơn mà vẫn đạt 99%. Gateway không tự phát hiện được:
@@ -137,6 +138,22 @@ Trỏ công cụ vào:
 Dashboard ở `http://localhost:3000`. Tạo pool ở `/pools`, thêm thành viên từ `/catalog`.
 
 Bỏ trống `VILAO_API_KEY` và `VILAO_PAT` thì gateway chạy thuần CKey, không lỗi.
+
+### Chi phí trong response
+
+Mọi response (cả stream) có thêm vào `usage`:
+
+```json
+"cost": 5, "cost_currency": "VND", "cost_source": "upstream" | "estimated" | "floor"
+```
+
+- `upstream` — sàn tự báo (CKey, qua `x_ckey.cost`)
+- `estimated` — gateway tính từ giá listing: `max(sàn, per_request + token/1e6 × giá)`,
+  công thức đã đối chiếu khớp với hoá đơn thật. Dùng cho Vilao, vì Vilao trả `cost: 0`
+- `floor` — không có số token để tính, chỉ biết mức sàn
+
+Số `estimated`/`floor` được đối soát với API quản lý Vilao vài giây sau; trang Chi tiêu
+luôn hiện con số cuối.
 
 ### Dùng từ app / SDK / web khác
 
