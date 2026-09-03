@@ -14,6 +14,7 @@ export function Nav({ here }: { here: string }) {
     ["/", "dashboard"],
     ["/catalog", "catalog"],
     ["/pools", "pools"],
+    ["/usage", "usage"],
   ];
   return (
     <nav style={{ display: "flex", gap: "1.2rem", marginBottom: "1.8rem", fontSize: "0.8rem" }}>

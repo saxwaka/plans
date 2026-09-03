@@ -2,6 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { syncAll } from "@/lib/gateway/catalog";
+import { reconcileVilao } from "@/lib/gateway/reconcile";
+import { applyRules } from "@/lib/gateway/rules";
+import { setMemberState, setRule } from "@/lib/gateway/pool";
 import { loadConfig } from "@/lib/gateway/config";
 import {
   addMember, createPool, deletePool, moveMember, removeMember, setMemberWeight, updatePool,
@@ -9,6 +12,9 @@ import {
 
 export async function syncCatalog() {
   await syncAll(loadConfig());
+  // Rules are re-evaluated right after a sync, so a newly listed seller shows up
+  // in the review queue instead of waiting for someone to remember.
+  applyRules();
   revalidatePath("/catalog");
   revalidatePath("/pools");
 }
@@ -65,6 +71,29 @@ export async function actionSetWeight(formData: FormData) {
     String(formData.get("poolId")),
     String(formData.get("listingId")),
     Number(formData.get("weight") ?? 1),
+  );
+  revalidatePath("/pools");
+}
+
+export async function actionReconcile() {
+  await reconcileVilao(loadConfig(), 5);
+  revalidatePath("/usage");
+  revalidatePath("/");
+  revalidatePath("/pools");
+}
+
+export async function actionSetRule(formData: FormData) {
+  const raw = String(formData.get("ruleJson") ?? "").trim();
+  setRule(String(formData.get("poolId")), raw === "" ? null : raw, formData.get("autoAdmit") === "1");
+  applyRules();
+  revalidatePath("/pools");
+}
+
+export async function actionMemberState(formData: FormData) {
+  setMemberState(
+    String(formData.get("poolId")),
+    String(formData.get("listingId")),
+    String(formData.get("state")),
   );
   revalidatePath("/pools");
 }

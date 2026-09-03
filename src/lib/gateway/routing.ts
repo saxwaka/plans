@@ -1,6 +1,7 @@
 import type { PoolMember } from "./pool";
+import type { MeasuredStat } from "./stats";
 
-export type Strategy = "failover" | "round-robin" | "weighted" | "pinned";
+export type Strategy = "failover" | "cheapest" | "round-robin" | "weighted" | "pinned";
 
 /**
  * Reliability on a 0-1 scale.
@@ -16,16 +17,36 @@ export type Strategy = "failover" | "round-robin" | "weighted" | "pinned";
  * unknown listing never wins first place on price alone.
  */
 const UNPROVEN = 0.5;
-const PRIOR_STRENGTH = 200;
+const PRIOR_STRENGTH = 20;
 const PRIOR_MEAN = 0.8;
 
-export function reliability(member: PoolMember): number {
-  if (member.success_rate === null) return UNPROVEN;
+/**
+ * Combines what the platform published with what the gateway measured itself.
+ *
+ * Vilao's numbers come with enormous sample sizes — one listing carries 849k
+ * requests — so they dominate and our handful of calls barely nudges them, which
+ * is correct. CKey publishes nothing, so its listings ride entirely on our own
+ * outcomes and take roughly twenty calls before the prior stops dominating.
+ *
+ * A listing with no evidence on either side is not "average", it is unknown, and
+ * is penalised hard so it never wins first place on price alone.
+ */
+export function reliability(member: PoolMember, measured?: MeasuredStat): number {
+  const publishedN = member.success_rate === null ? 0 : (member.total_requests ?? 0);
+  const publishedSuccesses = (member.success_rate ?? 0) / 100 * publishedN;
 
-  const rate = member.success_rate / 100;
-  const n = member.total_requests ?? 0;
-  // Shrink towards the prior so a handful of calls cannot mint a perfect score.
-  return (rate * n + PRIOR_MEAN * PRIOR_STRENGTH) / (n + PRIOR_STRENGTH);
+  const ownN = measured?.calls ?? 0;
+  const ownSuccesses = ownN - (measured?.failures ?? 0);
+
+  const n = publishedN + ownN;
+  if (n === 0) return UNPROVEN;
+
+  return (publishedSuccesses + ownSuccesses + PRIOR_MEAN * PRIOR_STRENGTH) / (n + PRIOR_STRENGTH);
+}
+
+/** True when neither the platform nor the gateway has ever seen this listing work. */
+export function isUnproven(member: PoolMember, measured?: MeasuredStat): boolean {
+  return member.success_rate === null && (measured?.calls ?? 0) === 0;
 }
 
 /** Rough VND for one typical call, used only to compare members with each other. */
@@ -38,8 +59,8 @@ export function estimatedCost(member: PoolMember, tokensIn = 1000, tokensOut = 5
   return Math.max(member.price_floor ?? 0, perRequest + tokenCost);
 }
 
-export function score(member: PoolMember): number {
-  return estimatedCost(member) / reliability(member);
+export function score(member: PoolMember, measured?: MeasuredStat): number {
+  return estimatedCost(member) / reliability(member, measured);
 }
 
 /**
@@ -48,12 +69,64 @@ export function score(member: PoolMember): number {
  * The list is always a full fallback chain — strategies differ only in who goes
  * first, never in whether a backup exists.
  */
-export function orderMembers(members: PoolMember[], strategy: string, counter: number): PoolMember[] {
+export interface OrderOptions {
+  stats?: Map<string, MeasuredStat>;
+  /**
+   * Whether an untested listing may go first.
+   *
+   * Learning whether a cheap CKey seller works means sending it a real request,
+   * which risks the very request that teaches us. So exploration is allowed only
+   * when the failure would be invisible: a non-streaming call with a fallback
+   * still in hand. On a streaming call, unproven members are pushed behind
+   * proven ones — they still serve as backups, just never as the first try.
+   */
+  allowExploration?: boolean;
+}
+
+export function orderMembers(
+  members: PoolMember[],
+  strategy: string,
+  counter: number,
+  options: OrderOptions = {},
+): PoolMember[] {
   const usable = members.filter((m) => m.stale === 0);
   const pool = usable.length > 0 ? usable : members;
   if (pool.length <= 1) return pool;
 
+  return demoteUnproven(byStrategy(pool, strategy, counter, options), options);
+}
+
+/**
+ * Pushes never-tested listings behind tested ones, preserving relative order.
+ *
+ * Applied *after* the strategy has ordered the chain, not before: a sort by
+ * score would otherwise undo it and quietly hand a streaming request to a
+ * listing nobody has ever called.
+ */
+function demoteUnproven(ordered: PoolMember[], options: OrderOptions): PoolMember[] {
+  if (options.allowExploration !== false) return ordered;
+
+  const stats = options.stats;
+  const proven = ordered.filter((m) => !isUnproven(m, stats?.get(m.id)));
+  const unproven = ordered.filter((m) => isUnproven(m, stats?.get(m.id)));
+  return proven.length > 0 ? [...proven, ...unproven] : ordered;
+}
+
+function byStrategy(
+  pool: PoolMember[],
+  strategy: string,
+  counter: number,
+  options: OrderOptions,
+): PoolMember[] {
   switch (strategy) {
+    case "cheapest": {
+      // The one strategy that actually consults the score: estimated cost divided
+      // by reliability, so a listing is only cheap if it also works. Manual order
+      // is ignored here by design — use "failover" to keep your own ranking.
+      const stats = options.stats;
+      return [...pool].sort((a, b) => score(a, stats?.get(a.id)) - score(b, stats?.get(b.id)));
+    }
+
     case "pinned":
       return pool;
 

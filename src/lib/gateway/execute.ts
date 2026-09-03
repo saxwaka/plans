@@ -3,6 +3,7 @@ import type { GatewayConfig } from "./config";
 import { dispatchChat } from "./dispatch";
 import { normalizeUpstreamError, openAiErrorBody } from "./errors";
 import type { PoolMember } from "./pool";
+import { scheduleReconcile } from "./reconcile";
 import { recordRun } from "./runlog";
 import { holdFirstChunk, instrumentSse } from "./stream";
 import type { UpstreamUsage } from "./types";
@@ -68,7 +69,10 @@ export async function executeChat(input: ExecuteInput): Promise<Response> {
     const deadline = AbortSignal.any([AbortSignal.timeout(totalTimeoutMs), clientSignal]);
     const startedAt = Date.now();
 
-    const log = (extra: Parameters<typeof recordRun>[1] extends infer T ? Partial<T> : never) =>
+    const log = (extra: Parameters<typeof recordRun>[1] extends infer T ? Partial<T> : never) => {
+      // Vilao never reports cost inline, so a successful call there leaves a
+      // priceless row behind until the management API is consulted.
+      if (member.platform === "vilao") scheduleReconcile(config);
       recordRun(clientKeyId, {
         platform: member.platform,
         listingId: member.id,
@@ -79,6 +83,7 @@ export async function executeChat(input: ExecuteInput): Promise<Response> {
         status: "error",
         ...extra,
       } as Parameters<typeof recordRun>[1]);
+    };
 
     let response: Response;
     try {

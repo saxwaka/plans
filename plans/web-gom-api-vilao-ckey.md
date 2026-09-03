@@ -266,8 +266,8 @@ Ba quy tắc cứng, rút từ dữ liệu thật:
 | ~~**M2**~~ **XONG** Catalog + Filter + `/v1/messages` | Sync hai sàn, trang duyệt, bộ lọc, endpoint Anthropic | Lọc "text, ≤500 VND, success ≥98%, ≥1000 req" và thấy số còn lại |
 | ~~**M3**~~ **XONG** Pool | Pool tĩnh, kéo thả thứ tự, `/v1/models` trả tên pool, chuyển tiếp model lạ | Gọi `"model":"opus"` chạy qua thành viên #1 |
 | ~~**M4** Định tuyến~~ | **XONG** — chiến lược, fallback, giữ chunk đầu, trần chi tiêu (Vilao + auto-subscribe đã làm ở M3) | Đạt: người bán CKey sập thật giữa lúc test, gateway tự tụt sang Vilao, client không thấy lỗi |
-| **M5** Kế toán | Đối soát tiền hai bên, trang Usage, **tiền lãng phí do fallback** | Biết hôm nay tiêu bao nhiêu, tiết kiệm bao nhiêu, phí bao nhiêu cho lần thử hỏng |
-| **M6** Pool theo luật + học chất lượng | `pool_rule`, hàng chờ duyệt, `listing_stat`, thăm dò có kiểm soát | Người bán rẻ mới tự vào hàng chờ; listing hỏng tự rơi hạng |
+| ~~**M5**~~ **XONG** Kế toán | Đối soát tiền hai bên, trang Usage, **tiền lãng phí do fallback** | Biết hôm nay tiêu bao nhiêu, tiết kiệm bao nhiêu, phí bao nhiêu cho lần thử hỏng |
+| ~~**M6**~~ **XONG** Pool theo luật + học chất lượng | `pool_rule`, hàng chờ duyệt, `listing_stat`, thăm dò có kiểm soát | Người bán rẻ mới tự vào hàng chờ; listing hỏng tự rơi hạng |
 
 **M1 có giá trị ngay.** M3 là lúc pool trả công. M4 khó nhất. M6 là chỗ khác biệt so với mọi relay có sẵn.
 

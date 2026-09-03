@@ -124,3 +124,43 @@ export function poolRotation(poolId: string): number {
     .get(poolId) as { n: number };
   return row.n;
 }
+
+export interface PoolRule {
+  filter: import("./filter").ListingFilter;
+  autoAdmit: boolean;
+}
+
+export function getRule(poolId: string): PoolRule | null {
+  const row = getDb()
+    .prepare("SELECT rule_json, auto_admit FROM pool WHERE id = ?")
+    .get(poolId) as { rule_json: string | null; auto_admit: number } | undefined;
+  if (!row?.rule_json) return null;
+  try {
+    return { filter: JSON.parse(row.rule_json), autoAdmit: row.auto_admit === 1 };
+  } catch {
+    return null;
+  }
+}
+
+export function setRule(poolId: string, filterJson: string | null, autoAdmit: boolean): void {
+  getDb()
+    .prepare("UPDATE pool SET rule_json = ?, auto_admit = ? WHERE id = ?")
+    .run(filterJson, autoAdmit ? 1 : 0, poolId);
+}
+
+export function candidates(poolId: string): PoolMember[] {
+  return getDb()
+    .prepare(
+      `SELECT l.*, m.position, m.weight, m.state
+         FROM pool_member m JOIN listing l ON l.id = m.listing_id
+        WHERE m.pool_id = ? AND m.state = 'candidate'
+        ORDER BY COALESCE(l.price_in, l.price_request, 1e12) ASC`,
+    )
+    .all(poolId) as PoolMember[];
+}
+
+export function setMemberState(poolId: string, listingId: string, state: string): void {
+  getDb()
+    .prepare("UPDATE pool_member SET state = ? WHERE pool_id = ? AND listing_id = ?")
+    .run(state, poolId, listingId);
+}

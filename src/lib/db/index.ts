@@ -13,6 +13,10 @@ const ADDITIONS: [table: string, column: string, definition: string][] = [
   ["pool", "max_attempts", "INTEGER NOT NULL DEFAULT 3"],
   ["pool", "ttfb_timeout_ms", "INTEGER"],
   ["pool", "total_timeout_ms", "INTEGER"],
+  // Vilao usage row this run's cost came from; also stops one row paying for two runs.
+  ["run", "reconciled_from", "TEXT"],
+  ["pool", "rule_json", "TEXT"],
+  ["pool", "auto_admit", "INTEGER NOT NULL DEFAULT 0"],
 ];
 
 function migrate(handle: Database.Database): void {

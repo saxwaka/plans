@@ -5,6 +5,7 @@ import { executeChat } from "@/lib/gateway/execute";
 import { resolveModel } from "@/lib/gateway/resolve";
 import { poolRotation } from "@/lib/gateway/pool";
 import { orderMembers } from "@/lib/gateway/routing";
+import { measuredStats } from "@/lib/gateway/stats";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -43,6 +44,12 @@ export async function POST(request: Request): Promise<Response> {
       resolved.members,
       resolved.strategy,
       resolved.poolId ? poolRotation(resolved.poolId) : 0,
+      {
+        stats: measuredStats(),
+        // A streaming request cannot hide a bad first pick once bytes ship, so
+        // untested listings only lead on calls that can fail invisibly.
+        allowExploration: body.stream !== true,
+      },
     ),
     poolId: resolved.poolId,
     poolName: resolved.poolName,

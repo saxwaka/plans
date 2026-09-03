@@ -3,6 +3,8 @@ import {
   actionDeletePool,
   actionMoveMember,
   actionRemoveMember,
+  actionMemberState,
+  actionSetRule,
   actionSetWeight,
   actionUpdatePool,
   syncCatalog,
@@ -10,7 +12,8 @@ import {
 import { poolSpend } from "@/lib/gateway/budget";
 import { estimatedCost, reliability } from "@/lib/gateway/routing";
 import { btn, c, input, Nav, Td, Th, vnd } from "../ui";
-import { listPools, poolMembers } from "@/lib/gateway/pool";
+import { candidates, getRule, listPools, poolMembers } from "@/lib/gateway/pool";
+import { measuredStats } from "@/lib/gateway/stats";
 import { countAll } from "@/lib/gateway/filter";
 
 export const dynamic = "force-dynamic";
@@ -18,6 +21,7 @@ export const dynamic = "force-dynamic";
 export default function Pools() {
   const pools = listPools();
   const catalogSize = countAll();
+  const stats = measuredStats();
 
   return (
     <main style={{ maxWidth: 1200, margin: "0 auto" }}>
@@ -58,6 +62,8 @@ export default function Pools() {
           max_price_per_request?: number | null;
         };
         const spend = poolSpend(pool.id);
+        const rule = getRule(pool.id);
+        const queue = candidates(pool.id);
         return (
           <section key={pool.id} style={{ marginBottom: "2.5rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginBottom: "0.6rem" }}>
@@ -77,7 +83,8 @@ export default function Pools() {
             >
               <input type="hidden" name="poolId" value={pool.id} />
               <select style={btn} name="strategy" defaultValue={pool.strategy}>
-                <option value="failover">failover</option>
+                <option value="failover">failover (thứ tự bạn đặt)</option>
+                <option value="cheapest">cheapest (rẻ nhất đã kiểm chứng)</option>
                 <option value="round-robin">round-robin</option>
                 <option value="weighted">weighted</option>
                 <option value="pinned">pinned</option>
@@ -105,6 +112,49 @@ export default function Pools() {
                 )}
               </span>
             </form>
+
+            <details style={{ marginBottom: "0.8rem" }}>
+              <summary style={{ fontSize: "0.72rem", color: c.dim, cursor: "pointer" }}>
+                luật tự nhận thành viên {rule ? "· đang bật" : "· tắt"}
+                {queue.length > 0 && (
+                  <span style={{ color: c.warn }}> · {queue.length} chờ duyệt</span>
+                )}
+              </summary>
+              <form action={actionSetRule} style={{ marginTop: "0.5rem" }}>
+                <input type="hidden" name="poolId" value={pool.id} />
+                <textarea
+                  name="ruleJson"
+                  rows={3}
+                  placeholder='{"platform":"ckey","search":"opus","maxPriceIn":500}'
+                  defaultValue={rule ? JSON.stringify(rule.filter) : ""}
+                  style={{ ...input, width: "100%", fontFamily: "inherit", cursor: "text" }}
+                />
+                <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", marginTop: "0.4rem" }}>
+                  <label style={{ fontSize: "0.7rem", color: c.dim }}>
+                    <input type="checkbox" name="autoAdmit" value="1" defaultChecked={rule?.autoAdmit} />{" "}
+                    tự nhận thẳng (bỏ hàng chờ duyệt)
+                  </label>
+                  <button style={btn} type="submit">lưu luật</button>
+                </div>
+              </form>
+            </details>
+
+            {queue.length > 0 && (
+              <div style={{ marginBottom: "0.8rem", fontSize: "0.74rem" }}>
+                <div style={{ color: c.warn, marginBottom: "0.3rem" }}>
+                  {queue.length} listing khớp luật, chờ bạn duyệt:
+                </div>
+                {queue.slice(0, 12).map((q) => (
+                  <div key={q.id} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.15rem 0" }}>
+                    <span style={{ minWidth: 300 }}>
+                      {q.platform} · {q.display_name} · in={vnd(q.price_in)}
+                    </span>
+                    <StateButton poolId={pool.id} listingId={q.id} state="active" label="nhận" />
+                    <StateButton poolId={pool.id} listingId={q.id} state="blocked" label="chặn" />
+                  </div>
+                ))}
+              </div>
+            )}
 
             {members.length === 0 ? (
               <p style={{ color: c.warn, fontSize: "0.75rem" }}>
@@ -135,10 +185,19 @@ export default function Pools() {
                       <Td>{vnd(m.price_out)}</Td>
                       <Td>{vnd(m.price_request)}</Td>
                       <Td>
-                        {m.success_rate === null ? (
-                          <span style={{ color: c.dim }}>chưa đo</span>
-                        ) : (
+                        {m.success_rate !== null ? (
                           `${m.success_rate.toFixed(1)}%`
+                        ) : stats.get(m.id) ? (
+                          // CKey publishes nothing, so anything shown here the
+                          // gateway measured for itself.
+                          <span style={{ color: c.accent }} title="gateway tự đo">
+                            ~{(
+                              (1 - (stats.get(m.id)!.failures / stats.get(m.id)!.calls)) * 100
+                            ).toFixed(0)}
+                            % ({stats.get(m.id)!.calls})
+                          </span>
+                        ) : (
+                          <span style={{ color: c.dim }}>chưa đo</span>
                         )}
                       </Td>
                       <Td>{m.total_requests?.toLocaleString("vi-VN") ?? "—"}</Td>
@@ -146,8 +205,8 @@ export default function Pools() {
                           reliability — the number the router actually compares. */}
                       <Td>{vnd(estimatedCost(m))}₫</Td>
                       <Td>
-                        <span style={{ color: m.success_rate === null ? c.dim : undefined }}>
-                          {(estimatedCost(m) / reliability(m)).toFixed(1)}
+                        <span style={{ color: c.dim }} title="giá ước tính chia cho độ tin cậy">
+                          {(estimatedCost(m) / reliability(m, stats.get(m.id))).toFixed(1)}
                         </span>
                       </Td>
                       <Td>
@@ -177,6 +236,27 @@ export default function Pools() {
         );
       })}
     </main>
+  );
+}
+
+function StateButton({
+  poolId,
+  listingId,
+  state,
+  label,
+}: {
+  poolId: string;
+  listingId: string;
+  state: string;
+  label: string;
+}) {
+  return (
+    <form action={actionMemberState}>
+      <input type="hidden" name="poolId" value={poolId} />
+      <input type="hidden" name="listingId" value={listingId} />
+      <input type="hidden" name="state" value={state} />
+      <button style={btn} type="submit">{label}</button>
+    </form>
   );
 }
 

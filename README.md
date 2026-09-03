@@ -5,7 +5,7 @@ Công cụ của bạn trỏ vào gateway; key thật của hai sàn không bao 
 
 Kế hoạch: `plans/web-gom-api-vilao-ckey.md` · Khảo sát API: `docs/api-notes.md` · Mốc hiện tại: `plans/m1-duong-ong.md`
 
-## Trạng thái — M1 → M4 xong
+## Trạng thái — M1 → M6 xong
 
 | | |
 |---|---|
@@ -13,12 +13,49 @@ Kế hoạch: `plans/web-gom-api-vilao-ckey.md` · Khảo sát API: `docs/api-no
 | `/v1/messages` | giao thức Anthropic, cho Claude Code — **chỉ chạy listing CKey** |
 | `/v1/models` | pool đứng trước, rồi tới listing thô |
 | `/catalog` | 1.096 listing từ hai sàn, lọc đầy đủ |
-| `/pools` | tạo pool, thêm/bớt/đổi thứ tự thành viên |
+| `/pools` | tạo pool, thành viên, chiến lược, trần chi tiêu, luật tự nhận |
+| `/usage` | chi tiêu theo ngày và theo listing, nút đối soát Vilao |
 
-M4 thêm: fallback tự động, bốn chiến lược (failover · round-robin · weighted · pinned),
-giữ chunk đầu, phân loại lỗi đáng thử lại, trần chi tiêu theo pool, đo tiền lãng phí.
+M4 thêm fallback tự động, năm chiến lược, giữ chunk đầu, phân loại lỗi, trần chi tiêu.
+M5 thêm đối soát chi phí Vilao và trang Usage. M6 thêm pool theo luật và học chất lượng.
 
-**Chưa có (M5 trở đi):** đối soát chi phí Vilao, trang Usage, pool theo luật, học chất lượng.
+### Chiến lược pool
+
+| | |
+|---|---|
+| `failover` | theo đúng thứ tự bạn kéo thả |
+| `cheapest` | theo **điểm** = giá ước tính ÷ độ tin cậy — rẻ mà hay hỏng vẫn xếp sau |
+| `round-robin` | chia đều lượt, tránh chạm rate limit một người bán |
+| `weighted` | chia theo trọng số bạn đặt |
+| `pinned` | luôn thành viên #1 |
+
+### Độ tin cậy được tính thế nào
+
+Trộn **số Vilao công bố** với **số gateway tự đo**, làm mượt Bayes về 0.8:
+
+```
+tin cậy = (thành công công bố + thành công tự đo + 0.8×20) / (tổng lượt + 20)
+```
+
+Vilao có listing dựa trên 849k request nên số của họ áp đảo — đúng như vậy.
+CKey không công bố gì nên chạy hoàn toàn bằng số tự đo, cần khoảng 20 lượt gọi
+mới thoát ảnh hưởng của prior. Listing **chưa ai đo** bị phạt xuống 0.5 —
+"không biết" không phải "trung bình", và nó không bao giờ được đứng đầu chỉ nhờ rẻ.
+
+### Thăm dò có kiểm soát
+
+Muốn biết một listing CKey rẻ có dùng được không thì phải gửi request thật vào —
+mà nó có thể hỏng đúng request bạn cần. Nên listing chưa kiểm chứng **chỉ được
+đứng đầu khi request không streaming**, tức là lúc fallback còn cứu được và bạn
+không thấy gì. Khi streaming, chúng bị đẩy xuống sau các listing đã biết.
+Gateway **không bao giờ tự bắn thử** để học — chỉ học từ request bạn thật sự cần.
+
+### Pool theo luật
+
+Lưu một bộ filter vào pool; sau mỗi lần sync, listing mới khớp luật sẽ vào
+**hàng chờ duyệt**, không tự vào vòng chạy. Có công tắc "tự nhận thẳng" nếu bạn
+chấp nhận rủi ro — nhưng kể cả bật, listing chưa kiểm chứng vẫn bị điểm số giữ
+lại khỏi vị trí #1.
 
 ### Fallback hoạt động thế nào
 
@@ -37,15 +74,21 @@ request vừa rồi thực sự chạy qua đâu.
 
 ### Giới hạn đang có, cố ý và hiện rõ trên UI
 
-- **Trần chi tiêu mù với Vilao.** Vilao không trả cost trong response
-  (`usage.cost` luôn 0), nên trần ngân sách chỉ chặn được chi tiêu CKey.
-  Pool nào có request Vilao chưa tính giá sẽ hiện cảnh báo đỏ ngay cạnh ô trần.
-  Dashboard ghi "Chi hôm nay (thiếu)" thay vì đưa ra tổng sai. M5 đối soát.
+- **Chi phí Vilao về trễ vài giây.** Vilao không trả cost trong response
+  (`usage.cost` luôn 0), nên gateway đối soát ngầm với API quản lý khoảng 5 giây
+  sau mỗi lần gọi. Hai bên không chung id nên ghép theo người bán + model + số
+  token + thời gian; mỗi bản ghi usage chỉ dùng một lần. Trong khoảng trễ đó,
+  trần ngân sách chưa thấy khoản chi này — pool nào còn request chưa tính giá sẽ
+  hiện cảnh báo đỏ cạnh ô trần. Ép đối soát ngay bằng `npm run reconcile` hoặc
+  nút ở trang `/usage`.
 - **`/v1/messages` bỏ qua thành viên Vilao.** Vilao chỉ nói OpenAI. Thay vì viết
   bộ dịch hai chiều (phải sửa cả frame giữa stream), endpoint này chọn thành viên
   CKey trong pool; pool toàn Vilao thì báo lỗi kèm lý do.
-- **Chưa đo chất lượng CKey.** Điểm xếp hạng dùng `success_rate` Vilao công bố;
-  listing CKey nằm ở mức "chưa kiểm chứng" 0.5 cho tới M6.
+- **Chất lượng đầu ra không đo được.** `success_rate` chỉ nói request có trả về
+  hay không, **không** nói trả về có tốt không. Người bán rẻ hoàn toàn có thể
+  lặng lẽ phục vụ model yếu hơn mà vẫn đạt 99%. Gateway không tự phát hiện được:
+  nó chỉ cảnh báo khi `actual_model` lệch tên. Việc quan trọng nên dùng pool
+  `pinned` vào người bán bạn tin.
 
 ## Chạy
 
@@ -54,7 +97,7 @@ npm install
 cp .env.example .env.local     # điền CKEY_API_KEY
 npm run db:init
 npm run key:create cursor      # key chỉ hiện MỘT LẦN
-npm run sync                   # kéo catalog hai sàn về
+npm run sync                   # kéo catalog hai sàn về (và áp dụng luật pool)
 npm run build && npm run start
 ```
 
@@ -94,7 +137,8 @@ trần nếu muốn tách gateway khỏi UI. Đừng để logic định tuyến
 src/app/v1/…      route handler (nơi duy nhất chạm Next.js)
 src/app/page.tsx  dashboard
 src/lib/gateway/  auth · config · errors · stream · modelname · runlog
-                  catalog · filter · pool · resolve · dispatch
+                  catalog · filter · pool · resolve · dispatch · execute
+                  routing · budget · stats · rules · reconcile
                   upstream/ckey · upstream/vilao
 src/lib/db/       schema + kết nối
 ```

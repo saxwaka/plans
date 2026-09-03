@@ -104,3 +104,63 @@ export function spendToday(): {
     wasted: row.wasted ?? 0,
   };
 }
+
+export interface DailyRow {
+  day: string;
+  calls: number;
+  failures: number;
+  cost: number;
+  wasted: number;
+  unpriced: number;
+}
+
+export function spendByDay(days = 14): DailyRow[] {
+  return getDb()
+    .prepare<[number], DailyRow>(
+      `SELECT substr(created_at, 1, 10) AS day,
+              COUNT(*) AS calls,
+              SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS failures,
+              COALESCE(SUM(cost_vnd), 0) AS cost,
+              COALESCE(SUM(CASE WHEN status <> 'ok' THEN cost_vnd ELSE 0 END), 0) AS wasted,
+              SUM(CASE WHEN status = 'ok' AND cost_vnd IS NULL THEN 1 ELSE 0 END) AS unpriced
+         FROM run GROUP BY day ORDER BY day DESC LIMIT ?`,
+    )
+    .all(days);
+}
+
+export interface ListingSpend {
+  listing_id: string;
+  platform: string;
+  calls: number;
+  failures: number;
+  cost: number;
+  avg_latency: number | null;
+  unpriced: number;
+}
+
+export function spendByListing(limit = 30): ListingSpend[] {
+  return getDb()
+    .prepare<[number], ListingSpend>(
+      `SELECT listing_id, platform,
+              COUNT(*) AS calls,
+              SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS failures,
+              COALESCE(SUM(cost_vnd), 0) AS cost,
+              AVG(latency_ms) AS avg_latency,
+              SUM(CASE WHEN status = 'ok' AND cost_vnd IS NULL THEN 1 ELSE 0 END) AS unpriced
+         FROM run WHERE listing_id IS NOT NULL
+        GROUP BY listing_id ORDER BY cost DESC, calls DESC LIMIT ?`,
+    )
+    .all(limit);
+}
+
+/**
+ * What the pool's cheapest choice saved against its most expensive member.
+ * Only counts runs the gateway could actually price.
+ */
+export function unpricedTotal(): number {
+  return (
+    getDb()
+      .prepare("SELECT COUNT(*) AS n FROM run WHERE status = 'ok' AND cost_vnd IS NULL")
+      .get() as { n: number }
+  ).n;
+}
