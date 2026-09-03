@@ -28,6 +28,19 @@ function migrate(handle: Database.Database): void {
       handle.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
     }
   }
+
+  // Early runs logged listing_id as the bare upstream model name, before pools
+  // introduced the "<platform>:<id>" form. Left alone, one listing shows up as
+  // two rows in usage and — worse — its evidence is split across two keys, so
+  // reliability scoring sees half the calls it should.
+  handle
+    .prepare(
+      `UPDATE run SET listing_id = platform || ':' || listing_id
+        WHERE listing_id IS NOT NULL
+          AND listing_id NOT LIKE 'ckey:%'
+          AND listing_id NOT LIKE 'vilao:%'`,
+    )
+    .run();
 }
 
 export function getDb(): Database.Database {

@@ -43,6 +43,7 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
 export interface RunRow {
   id: string;
   attempt_no: number;
+  pool_id: string | null;
   listing_id: string | null;
   platform: string;
   requested_model: string;
@@ -61,7 +62,7 @@ export interface RunRow {
 export function recentRuns(limit = 50): RunRow[] {
   return getDb()
     .prepare<[number], RunRow>(
-      `SELECT id, attempt_no, listing_id, platform, requested_model, actual_model, stream,
+      `SELECT id, attempt_no, pool_id, listing_id, platform, requested_model, actual_model, stream,
               tokens_in, tokens_out, cost_vnd, ttfb_ms, latency_ms, status, error_code, created_at
          FROM run ORDER BY created_at DESC LIMIT ?`,
     )

@@ -58,12 +58,21 @@ export default function Dashboard() {
               <Td>{new Date(r.created_at).toLocaleTimeString("vi-VN")}</Td>
               <Td>
                 {r.requested_model}
-                {/* A seller quietly serving a different model is the one thing
-                    success rates cannot show, so surface a real mismatch — but
-                    compare base names, since upstreams drop the seller prefix. */}
-                {isModelMismatch(r.requested_model, r.actual_model) && (
-                  <span style={{ color: "#f0a202" }}> → {r.actual_model}</span>
-                )}
+                {/* A pool name resolving to one of its members is the whole point,
+                    so it is shown plainly. The warning colour is reserved for the
+                    case it was built for: a listing asked for by name that came
+                    back as something else. Base names are compared, since
+                    upstreams drop the seller prefix from what they return. */}
+                {r.pool_id
+                  ? r.actual_model && (
+                      <span style={{ color: "#8b93a1" }}> → {r.actual_model}</span>
+                    )
+                  : isModelMismatch(r.requested_model, r.actual_model) && (
+                      <span style={{ color: "#f0a202" }} title="người bán trả về model khác">
+                        {" "}
+                        → {r.actual_model}
+                      </span>
+                    )}
               </Td>
               <Td>
                 {r.stream ? "stream" : "sync"}
