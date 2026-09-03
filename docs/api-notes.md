@@ -137,28 +137,38 @@ curl -sS https://ckey.vn/v1/models -o docs/samples/ckey-models.json
 
 ---
 
-## Vilao — cần "subscribe" từng model vào key
+## Vilao — có HAI API riêng biệt
 
-Đã thử với key thật, sau khi tài khoản có số dư (2026-09-03).
+Đây là điều quan trọng nhất về Vilao, và mình đã bỏ sót ở vòng dò đầu tiên vì chỉ soi `api.vilao.ai`.
 
-### Key hợp lệ
+| | API suy luận (v1) | API quản lý (v2) |
+|---|---|---|
+| Host | `https://api.vilao.ai/v1` | `https://vilao.ai/api/v2` |
+| Dùng để | Gọi model | Quản lý key, catalog, số dư, usage |
+| Token | LLM key `sk-...` | **Personal Access Token `pat-...`** |
+| Header | `x-api-key` | `Authorization: Bearer pat-...` |
 
-Phép thử đối chứng: `/v1/models` với key bịa ra trả `401 INVALID_API_KEY`; với key thật trả `200`.
+Hai loại token **không dùng thay nhau được**. Đưa `sk-...` cho v2 sẽ nhận:
 
-### Bẫy xác thực — hai endpoint không giống nhau
+```json
+{"error":{"code":"auth/invalid-token-type","message":"Invalid token",
+  "suggestion":"API v2 requires a Personal Access Token (pat-xxx). Get one at /console/user/api-tokens"}}
+```
+
+### Bẫy xác thực ở API v1
 
 Thứ này tốn nhiều giờ nếu không biết trước:
 
-| Endpoint | `Authorization: Bearer` | `x-api-key` |
+| Endpoint v1 | `Authorization: Bearer` | `x-api-key` |
 |---|---|---|
 | `/v1/models` | 200 | 200 |
 | `/v1/chat/completions` | **401 `INVALID_API_KEY`** | đi tiếp bình thường |
 
 Cùng một key, cùng lúc. Endpoint chat **từ chối `Bearer`** và **báo sai lý do** — nói key hỏng trong khi thật ra nó không đọc header đó. Trớ trêu là chính thông báo lỗi của `/v1/models` lại quảng cáo cả hai dạng đều được.
 
-**Kết luận: Vilao luôn dùng `x-api-key`.**
+**Kết luận: v1 luôn dùng `x-api-key`; v2 luôn dùng `Bearer pat-`.**
 
-### Model phải được gắn vào key trước khi gọi
+### Model phải được subscribe vào key
 
 Sau khi nạp tiền, lỗi chuyển từ `INSUFFICIENT_BALANCE` sang:
 
@@ -168,26 +178,55 @@ Sau khi nạp tiền, lỗi chuyển từ `INSUFFICIENT_BALANCE` sang:
   "type":"permission_error"}}
 ```
 
-Giống hệt nhau với `auto`, `gpt-4o-mini`, `claude-sonnet-5`, `gemini-2.5-flash`.
+Giống hệt với `auto`, `gpt-4o-mini`, `claude-sonnet-5`, `gemini-2.5-flash`. Đây cũng là lý do `/v1/models` trả `{"data":null}` dù đã có tiền: endpoint đó liệt kê **model đã subscribe của key này**, không phải catalog.
 
-Đây là mô hình khác hẳn CKey. Vilao **không** bán catalog chung — bạn phải vào Marketplace **đăng ký từng model vào từng API key**. Vì thế `/v1/models` vẫn trả `{"data":null}` dù đã có tiền: endpoint đó liệt kê **model đã đăng ký của key này**, không phải catalog.
-
-Hệ quả cho app: `/v1/models` của Vilao là *quyền của key*, không phải danh mục để duyệt. Muốn có catalog Vilao để so giá thì phải scrape web — API không cung cấp.
-
-### Bề mặt API rất hẹp
-
-Chỉ hai route. Tất cả những cái sau đều `404 {"error":"not found","path":...}`:
+Việc subscribe làm được bằng API v2, không cần vào web:
 
 ```
-/v1/me  /v1/user  /v1/account  /v1/balance  /v1/credits
-/v1/usage  /v1/key  /v1/marketplace  /v1/catalog  /v1/models/list
+POST /api/v2/llm/keys/:id/subscriptions
+  { "provider_id": "...", "model_id": "...", "alias": "..." }
 ```
 
-Không có endpoint xem số dư.
+### API v2 — các route đã xác minh còn sống
+
+Tất cả trả `401 auth/invalid-format` khi không có token, nghĩa là route tồn tại:
+
+| Route | Scope | Dùng để |
+|---|---|---|
+| `GET /api/v2/account/me` | `account:read` | Thông tin tài khoản + số dư |
+| `GET /api/v2/account/balance` | `account:read` | `balance`, `withdrawable_balance`, `used_balance` |
+| `GET /api/v2/llm/marketplace/models` | `llm:read` | **Catalog marketplace** |
+| `GET /api/v2/llm/keys` | `llm:read` | Danh sách LLM key |
+| `POST /api/v2/llm/keys` | `llm:write` | Tạo key, trả `raw_key` `sk-...` |
+| `DELETE /api/v2/llm/keys/:id` | `llm:write` | Thu hồi key |
+| `GET /api/v2/llm/keys/:id/subscriptions` | `llm:read` | Model đã gắn vào key |
+| `POST /api/v2/llm/keys/:id/subscriptions` | `llm:write` | **Subscribe model** |
+| `DELETE .../subscriptions/:sub_id` | `llm:write` | Unsubscribe |
+| `GET /api/v2/llm/usage` | `llm:read` | Lịch sử dùng, phân trang, lọc theo `days` |
+| `GET/POST/DELETE /api/v2/tokens` | `session` | Quản lý PAT (dùng JWT session, không phải PAT) |
+
+Còn có nhóm `wallet` để nạp tiền bằng QR SePay (`POST /api/v2/wallet/topup`, polling `GET /api/v2/wallet/topup/:id`) — ngoài phạm vi v1 của app.
+
+Rate limit: **120 req/phút mỗi token**, vượt thì 429.
+
+Envelope thành công của v2: `{"success":true,"data":...}`. Envelope lỗi: `{"error":{"code","message","hint"}}` — **khác cả v1 lẫn CKey**, nên hàm chuẩn hoá lỗi phải đọc được ba dạng.
+
+### Sửa lại kết luận trước
+
+Vòng trước mình viết "không lấy được catalog Vilao qua API, phải scrape web". **Sai.** `GET /api/v2/llm/marketplace/models` làm đúng việc đó. Kết luận cũ đến từ chỗ chỉ dò `api.vilao.ai` mà không biết có `vilao.ai/api/v2`.
 
 ### Còn chờ
 
-Đăng ký vài model vào key trên Marketplace → gọi lại để lấy schema `/v1/models` thật, biết đơn vị giá, và xem có model ảnh/video không.
+**Một PAT.** Tạo ở `https://vilao.ai/console/user/api-tokens`. Mỗi user chỉ có một token, full quyền, chỉ hiện một lần lúc tạo.
+
+Có PAT thì làm được hết bằng script, không cần bấm web:
+1. `GET /api/v2/llm/marketplace/models` → catalog thật, biết schema và giá
+2. `GET /api/v2/llm/keys` → lấy `id` của key `sk-...` hiện có
+3. `POST /api/v2/llm/keys/:id/subscriptions` → subscribe một model rẻ
+4. Gọi `api.vilao.ai/v1/chat/completions` với `x-api-key` → xong M0 phía Vilao
+5. `GET /api/v2/account/balance` trước và sau → **chốt bội số giá bằng cách đối chiếu số dư**
+
+Bước 5 là cách sạch nhất để trả lời câu "VND trên bao nhiêu token", vì Vilao có endpoint số dư còn CKey thì không.
 
 ---
 
@@ -206,7 +245,7 @@ Egress tới `api.xah.io` đã mở. Test trên **cả hai host**, cả hai dạ
   "type":"authentication_error"}}
 ```
 
-Trước đây chưa phân biệt được "key sai" với "gọi nhầm host". **Giờ đã rõ: không phải host.** Host chính thức cũng từ chối, nên key sai, hết hạn, hoặc copy thiếu.
+Trước đây chưa phân biệt được "key sai" với "gọi nhầm host". **Giờ đã rõ: không phải host.**
 
 Bằng chứng phụ cho thấy key *có* được đọc: đổi tên header làm thông báo lỗi đổi theo.
 
@@ -217,26 +256,29 @@ Bằng chứng phụ cho thấy key *có* được đọc: đổi tên header l�
 | `api-key: <k>` | "A valid API key is required." |
 | `Authorization: <k>` (thiếu Bearer) | "A valid API key is required." |
 
-"Invalid" nghĩa là đã tìm thấy key và tra cứu rồi loại; "required" nghĩa là không tìm thấy key ở đâu cả. Vậy `Bearer` và `x-api-key` đều là header đúng, và chuỗi key mới là thứ sai.
+"Invalid" = tìm thấy key rồi tra cứu và loại. "Required" = không tìm thấy key nào. Vậy header đúng, chuỗi key mới sai.
 
-**Cần: copy lại key từ dashboard CKey.** Key mẫu trong docs của họ có dạng `sk-...`; chuỗi đã thử là 48 ký tự hex không tiền tố.
+**Cần: copy lại key từ dashboard CKey.** Chuỗi đã thử là 48 ký tự hex không tiền tố; docs của họ dùng dạng `sk-...`.
 
 ### Hai host, cùng một backend
 
-`ckey.vn/v1` và `api.xah.io/v1` trả **đúng cùng 498 model, danh sách trùng khít**. Dùng host nào cũng được; để `api.xah.io` làm mặc định vì đó là base URL chính thức, và cho đổi ở Settings.
+`ckey.vn/v1` và `api.xah.io/v1` trả **đúng cùng 498 model, danh sách trùng khít**. Để `api.xah.io` làm mặc định vì đó là base URL chính thức, cho đổi ở Settings.
 
-### Envelope lỗi hai bên khác nhau
+---
+
+## Ba envelope lỗi khác nhau
 
 ```
-CKey  : {"error":{"message", "request_id", "type"}}
-Vilao : {"error":{"code",    "message",    "type"}}
+CKey       : {"error":{"message", "request_id", "type"}}
+Vilao v1   : {"error":{"code",    "message",    "type"}}
+Vilao v2   : {"error":{"code",    "message",    "hint"|"suggestion"}}
 ```
 
-CKey có `request_id` (hữu ích khi khiếu nại người bán), Vilao có `code` máy đọc được. Cần hàm chuẩn hoá lỗi đọc được cả hai.
+`provider.ts` cần hàm chuẩn hoá đọc được cả ba.
 
-### Catalog thay đổi liên tục
+## Catalog thay đổi liên tục
 
-Đo thật, hai snapshot cách nhau khoảng một giờ: vẫn 498 model, nhưng `tdsang1999/gemini-3.7-flash` biến mất và `tdsang1999/gemini-3.7-flash-high` xuất hiện.
+Đo thật, hai snapshot CKey cách nhau khoảng một giờ: vẫn 498 model, nhưng `tdsang1999/gemini-3.7-flash` biến mất và `tdsang1999/gemini-3.7-flash-high` xuất hiện.
 
 Người bán đổi listing trong vòng vài giờ. Khi sync **không xoá cứng** listing cũ — đánh dấu `stale` để lịch sử `run` và số liệu tin cậy không mồ côi.
 
@@ -244,13 +286,9 @@ Người bán đổi listing trong vòng vài giờ. Khi sync **không xoá cứ
 
 ## Việc còn lại của M0
 
-Cả hai đều là thao tác trên dashboard, không phải việc code:
-
-1. **CKey** — copy lại API key cho đúng
-2. **Vilao** — vào Marketplace đăng ký vài model vào key
-
-Sau đó mới chốt được: bội số giá (VND trên 1 triệu token hay khác — xác nhận bằng một request thật rồi đối chiếu số dư), schema model của Vilao, và cách gọi model video Veo.
+1. **Vilao** — tạo PAT ở `/console/user/api-tokens`, rồi mình chạy trọn bộ 5 bước ở trên bằng script
+2. **CKey** — copy lại API key cho đúng
 
 ## Bảo mật
 
-Hai key được dán thẳng vào khung chat nên nằm trong transcript session này. Mình **không** ghi chúng xuống đĩa và **không** commit (đã grep toàn repo). Vẫn nên **thu hồi và tạo key mới** sau khi xong; từ giờ truyền qua biến môi trường thay vì dán vào chat.
+Các key đã dán vào khung chat nằm trong transcript session này. Mình **không** ghi xuống đĩa và **không** commit (đã grep toàn repo). Vẫn nên **thu hồi và tạo lại** sau khi xong. PAT của Vilao là **full quyền, gồm cả ví tiền** — cẩn thận hơn nữa với nó; từ giờ truyền qua biến môi trường thay vì dán vào chat.
