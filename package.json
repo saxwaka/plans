@@ -1,0 +1,30 @@
+{
+  "name": "llm-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "key:create": "tsx scripts/create-key.ts",
+    "db:init": "tsx scripts/init-db.ts",
+    "sync": "tsx scripts/sync.ts",
+    "reconcile": "tsx scripts/reconcile.ts"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "next": "^15.1.6",
+    "openai": "^7.9.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.7",
+    "@types/react": "^19.0.7",
+    "playwright": "^1.62.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

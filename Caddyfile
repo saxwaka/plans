@@ -1,0 +1,24 @@
+# Set GATEWAY_DOMAIN in .env (compose reads it) — Caddy fetches and renews the
+# certificate itself. Streaming needs flush_interval -1 so SSE frames are not
+# buffered into one lump at the end.
+{$GATEWAY_DOMAIN} {
+    encode zstd gzip
+
+    @sse path /v1/*
+    reverse_proxy @sse gateway:3000 {
+        flush_interval -1
+        transport http {
+            read_timeout 330s
+            write_timeout 330s
+        }
+    }
+
+    reverse_proxy gateway:3000
+
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options nosniff
+        Referrer-Policy no-referrer
+        -Server
+    }
+}
