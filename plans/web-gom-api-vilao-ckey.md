@@ -1,117 +1,207 @@
-# Kế hoạch: Web gom API model từ Vilao & CKey
+# Kế hoạch: Gateway API cá nhân trước Vilao & CKey
 
-Ngày: 2026-09-03 · Trạng thái: draft v3, đã khảo sát thật (xem `docs/api-notes.md`)
+Ngày: 2026-09-03 · Trạng thái: v4 — viết lại theo mô hình proxy · Khảo sát: `docs/api-notes.md`
 
-## 1. Hai nguồn
+## 1. Sản phẩm
 
-| | CKey | Vilao |
-|---|---|---|
-| Web | ckey.vn/llm-api | vilao.ai |
-| Base URL | `https://api.xah.io/v1` (chính thức) hoặc `https://ckey.vn/v1` | `https://api.vilao.ai/v1` |
-| Auth | `Authorization: Bearer sk-xxx` | `Authorization: Bearer` hoặc `x-api-key` |
-| `/v1/models` | **Public, không cần key** — 498 model | 401, bắt buộc key |
-| Giao thức | OpenAI + Anthropic + Gemini + Ollama | OpenAI (chưa xác nhận thêm) |
-| Tiền tệ | VND | chưa biết |
-| Khảo sát | **Xong** | **Chặn — cần key** |
+Một **gateway OpenAI-compatible chạy local**. Mọi công cụ (Claude Code, Cursor, Cline, script Python) trỏ base URL vào web của bạn thay vì trỏ thẳng vào Vilao hay CKey.
 
-## 2. Ba điều khảo sát làm đổi kế hoạch
+```
+Cursor ─┐
+Claude ─┼─→  gateway của bạn  ─→ chọn listing tốt nhất ─┬─→ Vilao   (x-api-key)
+script ─┘    localhost:3000/v1                          └─→ CKey    (Bearer)
+                    │                                        │
+              key riêng của bạn                        lỗi → tụt sang listing kế
+                    │
+              ghi log tiền + độ trễ + thành/bại
+```
 
-**a. Có model video thật.** Plan v2 kết luận đây là dịch vụ text thuần — sai. CKey có `Veo-3.1-Lite/Fast/Quality` (240 / 300 / 1200 VND mỗi request), `gpt-image-2`, `FLUX-2-max`, `Qwen-Image`, `z-image-turbo`, và các route `/v1/videos/generations`, `/v1/images/generations`, `/v1/audio/speech` đều tồn tại. Ý định ban đầu của bạn — kéo model video về dùng — làm được.
+Bạn cấp key của **chính bạn** cho từng công cụ. Key thật của Vilao/CKey không bao giờ rời khỏi server.
 
-**b. CKey là marketplace 69 người bán, không phải một nhà cung cấp.** 467/498 id có dạng `nguoiban/ten-model`. Cùng `claude-opus-5` có 16 người bán, giá input từ 390 tới 5000 VND. 47 model có từ 2 người bán trở lên, **trung vị chênh 4.7 lần**. `gpt-image-2` giống hệt nhau: người này 960 VND, người kia 1600 VND.
+### Vì sao đáng làm
 
-Nghĩa là chuyện so giá không phải "CKey với Vilao" như plan cũ nghĩ. Nó chủ yếu là **so giá bên trong CKey**, giữa những người bán cùng một model. Vilao chỉ là nguồn thứ hai cộng thêm.
+Đây không phải chỉ để gộp cho gọn. Ba con số từ khảo sát nói rõ giá trị:
 
-**c. Rẻ nhất thường là bẫy.** Vài listing để giá 1 VND (`gemini-3.1-pro` chênh tới 6923 lần) — gần như chắc chắn là listing hỏng hoặc mồi câu. Nên chỉ số giá đứng một mình là vô dụng. Cần đo **độ tin cậy thật** của từng người bán: gọi được không, lỗi bao nhiêu phần trăm, chậm bao nhiêu.
+- Cùng `claude-opus-4-8`, người bán rẻ nhất **rẻ hơn 25 lần** người bán chính chủ mà tỷ lệ thành công gần bằng (99.0% so với 99.2%, đo trên 11.967 request)
+- Trung vị chênh giá **14.6x** trên Vilao, **4.7x** trên CKey
+- Cùng người bán `wowz` bán Veo trên cả hai sàn, **CKey đắt hơn đều 20%**
 
-Đây mới là chỗ đáng build, và không có công cụ nào sẵn làm việc này.
+Chọn tay giữa 1.102 listing từ 133 người bán là bất khả thi, và giá đổi ngay giữa phiên làm việc (đã chứng kiến một listing thêm `min_charge` sau vài giờ). Máy chọn thì được.
 
-## 3. Sản phẩm
+### Ngoài phạm vi
 
-Web chạy local, làm ba việc mà Open WebUI / LibreChat không làm:
+Không phải chỗ để chat (dùng Open WebUI trỏ vào gateway này). Không đăng nhập, không nhiều người dùng, không deploy public.
 
-1. **Catalog gộp** — tất cả model của CKey (498) và Vilao, gom các listing cùng một model về một dòng, xoè ra thấy từng người bán
-2. **Bảng xếp hạng người bán** — cho mỗi model, sắp theo *giá đã hiệu chỉnh theo độ tin cậy*, không phải giá trần trụi. Người bán 1 VND mà 90% request lỗi phải xếp dưới người bán 400 VND chạy ổn
-3. **Định tuyến + đo đạc** — gọi qua người bán tốt nhất, tự dò xuống người kế tiếp khi lỗi, và mỗi lần gọi lại cập nhật số liệu tin cậy
+## 2. Bốn quyết định kiến trúc khó
 
-Cộng thêm: playground gõ prompt, trang sinh ảnh/video, và theo dõi chi tiêu theo ngày.
+Đây là phần đáng bàn nhất, không phải chuyện chọn framework.
 
-Vòng lặp cốt lõi: **mỗi request thật vừa là việc bạn cần làm, vừa là một phép đo làm bảng xếp hạng chính xác hơn.**
+### 2a. Streaming giết chết fallback
 
-## 4. Kiến trúc
+Khi đã đẩy byte đầu tiên về client, **không thể rút lại để gọi người bán khác**. Mà streaming là bắt buộc — Cursor và Claude Code đều dùng.
 
-Next.js (App Router) + TypeScript + SQLite. Một process vừa serve UI vừa có API route — key chỉ sống ở server.
+Hướng giải quyết: **giữ lại chunk đầu tiên**. Gọi upstream, chờ đến khi nhận được chunk hợp lệ đầu tiên rồi mới bắt đầu ghi ra client. Mọi lỗi trước thời điểm đó (401, 402, 429, 503, timeout, upstream đứt) đều fallback được. Lỗi sau đó thì đành chịu — trả về client kèm cờ đánh dấu, và **tính vào thống kê thất bại của listing đó**.
+
+Chi phí: thêm một chút độ trễ đến token đầu tiên. Đáng, vì phần lớn lỗi của sàn relay xảy ra ngay lúc bắt tay.
+
+### 2b. Vilao bắt subscribe trước khi gọi
+
+Không thể gọi một model Vilao mà key chưa subscribe — trả `FORBIDDEN`. Nhưng bộ định tuyến lại chọn listing **tại thời điểm chạy**.
+
+Hướng giải quyết: **tự subscribe khi cần**. Trước khi gọi một listing Vilao lần đầu, `POST /api/v2/llm/keys/:id/subscriptions`, ghi nhớ vào DB, rồi gọi. Lần sau bỏ qua. Cần PAT sống trong server, và cần xử lý được trường hợp subscribe hỏng (coi như listing không khả dụng, tụt xuống listing kế).
+
+CKey không có bước này — gọi thẳng.
+
+### 2c. Học chất lượng của CKey mà không hại request thật
+
+Vilao công bố sẵn `success_rate` trên 515 listing, có listing dựa trên 849.389 request. **Không cần đo lại, và cũng không thể đo lại được quy mô đó.**
+
+CKey **không công bố gì**. Muốn biết một listing CKey giá rẻ có dùng được không thì phải gửi traffic thật vào — mà nó có thể hỏng đúng request bạn đang cần.
+
+Hướng giải quyết, ba tầng:
+1. **Mặc định an toàn.** Listing CKey chưa có dữ liệu bị xếp hạng "chưa kiểm chứng", không bao giờ tự động đứng đầu
+2. **Thăm dò có kiểm soát.** Chỉ thử listing lạ khi request **không streaming** và fallback còn nguyên — hỏng thì tụt xuống listing đã tin cậy, người dùng không thấy gì
+3. **Không tự bắn thử.** Không gọi thăm dò định kỳ để đốt tiền. Chỉ học từ request bạn thật sự cần
+
+Đây là điểm khác biệt cốt lõi so với mọi relay có sẵn.
+
+### 2d. Tên model không khớp nhau
+
+Cùng một model mang ba dạng tên: `claude-opus-4-8` (Vilao), `claude-opus-4.8` (CKey), `dungcsnd113/claude-opus-5` (CKey có tiền tố người bán), và có cả `GPT-5.6-sol` lẫn `gpt-5.6-sol`.
+
+Gateway phải phơi ra **một tên chuẩn duy nhất** cho client. Bảng ánh xạ `canonical → [listing]` là trái tim của hệ thống.
+
+Hướng giải quyết: chuẩn hoá tự động (bỏ tiền tố người bán, thường hoá, `.` ↔ `-`) rồi **cho sửa tay**, vì tự động chắc chắn sẽ sai vài chỗ. Giữ `raw_json` để đối chiếu.
+
+## 3. Kiến trúc
+
+**Next.js (App Router) + TypeScript + SQLite.** Một process vừa là gateway vừa là dashboard.
+
+Nguyên tắc quan trọng: **toàn bộ logic gateway nằm trong `lib/gateway/`, không dính framework.** Nếu sau này bạn muốn gateway chạy headless thường trực tách khỏi UI, chỉ việc bê thư mục đó sang một server Node trần. Đừng để logic định tuyến rò vào route handler.
 
 ```
 app/
-  page.tsx          → Catalog: model gộp, xoè ra danh sách người bán
-  model/[id]/       → chi tiết: mọi người bán, giá, độ tin cậy, lịch sử
-  playground/       → chat, chọn model, có nút "để hệ thống chọn người bán"
-  media/            → sinh ảnh / video (Veo, FLUX, gpt-image)
-  usage/            → chi tiêu theo ngày / model / người bán
-  settings/         → base URL + key mỗi provider, nút test
-  api/
-    chat/           → proxy streaming; NƠI DUY NHẤT chạm key
-    media/
-    models/sync/
-lib/
-  provider.ts       → OpenAICompatibleProvider(baseUrl, apiKey) — dùng chung cả 2
-  catalog.ts        → chuẩn hoá id 'nguoiban/model' → (seller, base_model)
-  pricing.ts        → tính tiền: token / per_request / min_charge
-  routing.ts        → chọn người bán, fallback khi lỗi
-  db/
+  api/v1/chat/completions/route.ts   → endpoint OpenAI-compatible (stream)
+  api/v1/messages/route.ts           → endpoint Anthropic (cho Claude Code)
+  api/v1/models/route.ts             → catalog chuẩn hoá
+  page.tsx                           → dashboard: request gần đây, tiền, sức khoẻ
+  models/                            → catalog, so giá, ghim/chặn listing
+  usage/                             → chi tiêu theo ngày / model / listing
+  settings/                          → key upstream, key phát hành, chính sách route
+lib/gateway/            ← KHÔNG dính Next.js
+  upstream/
+    vilao.ts            → x-api-key; auto-subscribe; đọc cost từ /api/v2/llm/usage
+    ckey.ts             → Bearer; đọc cost từ usage.x_ckey.cost
+    types.ts
+  catalog.ts            → sync + chuẩn hoá tên
+  routing.ts            → chấm điểm, chọn, chuỗi fallback
+  pricing.ts            → max(sàn, per_request + token/1e6 × giá)
+  stream.ts             → giữ chunk đầu, chuyển tiếp SSE
+  errors.ts             → chuẩn hoá 3 envelope lỗi về một dạng
+lib/db/
 ```
 
-Vì cả hai cùng chuẩn OpenAI, `provider.ts` là file duy nhất gọi HTTP. Không cần adapter riêng cho từng bên.
+### Luồng một request
 
-## 5. Data model
+```
+1. Xác thực key của bạn                     → 401 nếu sai
+2. Tra canonical model → danh sách listing
+3. Chấm điểm, sắp thứ tự                    → routing.ts
+4. Với từng listing theo thứ tự:
+     a. Vilao và chưa subscribe → subscribe
+     b. Gọi upstream
+     c. Chờ chunk đầu hợp lệ
+     d. Lỗi trước chunk đầu → listing kế
+5. Chuyển tiếp stream về client
+6. Ghi run: tiền, độ trễ, thành/bại, listing nào
+```
 
-- `provider(id, name, base_url, api_key, enabled)`
-- `listing(id, provider_id, external_id, seller, base_model, kind, price_json, context, raw_json, synced_at)`
-- `run(id, listing_id, kind, tokens_in, tokens_out, cost_vnd, latency_ms, status, error, created_at)`
-- `seller_stat(listing_id, calls, failures, p50_latency, last_ok_at, last_error)` — dẫn xuất từ `run`
+## 4. Data model
 
-`base_model` là khoá gom nhóm: `dungcsnd113/claude-opus-5` và `claude-opus-5` cùng về `claude-opus-5`. Chuẩn hoá phải bỏ qua hoa thường — dữ liệu thật có cả `GPT-5.6-sol` lẫn `gpt-5.6-sol`.
+- `client_key(id, name, key_hash, active, created_at)` — key gateway phát hành
+- `upstream(id, platform, base_url, api_key, pat, enabled)` — vilao / ckey
+- `listing(id, upstream_id, external_id, seller, canonical_model, kind, pricing_json, published_stats_json, raw_json, synced_at, stale)`
+- `canonical(name, kind, notes)` + `alias(alias, canonical)` — bảng ánh xạ, sửa tay được
+- `subscription(listing_id, upstream_sub_id, subscribed_at)` — chỉ Vilao
+- `run(id, client_key_id, canonical, listing_id, attempt_no, tokens_in, tokens_out, cost_vnd, latency_ms, ttfb_ms, status, error_code, stream, created_at)`
+- `listing_stat(listing_id, calls, failures, p50_ttfb, last_ok_at, last_error)` — dẫn xuất từ `run`
 
-`pricing.ts` phải xử lý ba chế độ, không được giả định chỉ có token:
+`attempt_no` cho phép ghi cả những lần fallback hỏng — đó chính là dữ liệu quý nhất để chấm điểm.
 
-- theo token: `input` × tokens_in + `output` × tokens_out
-- phẳng: `per_request`
-- sàn: `min_charge_per_request` — 127 model **chỉ** có `per_request`, phần lớn là ảnh/video
+**Đừng xoá cứng listing khi sync.** Đã đo: catalog CKey đổi trong vòng một giờ. Đánh dấu `stale` để `run` không mồ côi.
 
-`input` với `prompt` là hai tên của cùng một giá trị (kiểm tra 498 model, không cái nào lệch); `output` với `completion` cũng vậy. Đọc một, bỏ cái kia.
+## 5. Chấm điểm listing
+
+Công thức khởi điểm, tinh chỉnh sau khi có dữ liệu thật:
+
+```
+điểm = giá_ước_tính / độ_tin_cậy
+
+độ_tin_cậy = Vilao : success_rate đã công bố
+             CKey  : tự đo, làm mượt Bayes về 0.8 khi mẫu còn ít
+             chưa có dữ liệu : 0.5 (phạt nặng, không bao giờ đứng đầu)
+```
+
+Ba quy tắc cứng, học từ dữ liệu thật:
+
+- **Xếp hạng theo listing, không theo người bán.** `rouyea` vừa có listing 99.0% trên 11.967 request, vừa có listing 0% trên 1 request
+- **Mẫu nhỏ không phải bằng chứng.** "100% trên 1 request" phải xếp dưới "98% trên 10.000 request"
+- **Giá rẻ bất thường là cờ đỏ.** Vài listing để 1 VND, gần như chắc chắn là listing hỏng
+
+Chính sách chọn được ở Settings: *rẻ nhất đã kiểm chứng* (mặc định) · *tin cậy nhất* · *ghim cứng một listing*.
 
 ## 6. Các mốc
 
 | Mốc | Nội dung | Xong khi |
 |---|---|---|
-| ~~M0~~ | ~~Khảo sát API~~ | **CKey xong. Vilao chờ key** |
-| **M1** Khung + Settings | Next.js + SQLite + Settings; đồng thời chốt bội số giá bằng 1 request thật | Test connection 2 bên OK; biết chắc giá là VND trên 1M token hay khác |
-| **M2** Catalog | Sync `/v1/models`, gom theo `base_model`, xoè người bán | Gõ "opus", thấy 1 dòng với 16 người bán bên dưới, sắp theo giá |
-| **M3** Playground | `/v1/chat/completions` streaming qua API route, ghi `run` | Gõ prompt ra chữ chạy; mỗi lần gọi ghi lại tiền + độ trễ |
-| **M4** Xếp hạng + định tuyến | `seller_stat`, điểm tin cậy, tự chọn + fallback | Người bán 1 VND hay lỗi bị đẩy xuống dưới; gọi hỏng thì tự sang người kế |
-| **M5** Ảnh & video | `/v1/images/generations`, `/v1/videos/generations`, lưu file về `storage/` | Sinh 1 clip Veo-3.1, file nằm trên máy |
-| **M6** Chi tiêu | Trang Usage, tổng theo ngày/model/người bán, cảnh báo ngưỡng | Biết tuần này tiêu bao nhiêu, cho ai |
+| **M1** Đường ống | `/v1/chat/completions` một upstream cứng, key riêng, streaming | **Trỏ Cursor vào localhost:3000/v1 và code được thật** |
+| **M2** Catalog | Sync cả hai, chuẩn hoá tên, `/v1/models`, trang so giá | `/v1/models` trả tên chuẩn; bấm vào thấy mọi listing kèm giá |
+| **M3** Định tuyến | Chấm điểm, chuỗi fallback, giữ chunk đầu, auto-subscribe Vilao | Rút phích listing đầu → request vẫn xong qua listing kế, client không biết |
+| **M4** Kế toán | Ghi `run`, đối soát tiền hai bên, trang Usage | Biết hôm nay tiêu bao nhiêu, cho listing nào, tiết kiệm bao nhiêu so với giá chính chủ |
+| **M5** Học chất lượng | `listing_stat`, thăm dò có kiểm soát, làm mượt Bayes | Listing CKey rẻ tự leo hạng sau khi chứng minh được; listing hỏng tự rơi |
+| **M6** Ảnh & video | `/v1/images/generations`, `/v1/videos/generations`, lưu file | Sinh một clip Veo, file nằm trên máy |
 
-M2 là mốc có giá trị đầu tiên — chỉ cần nó là đã trả lời được "model này nên mua của ai". M4 là chỗ khó và đáng nhất.
+**M1 là mốc có giá trị thật ngay** — chỉ cần nó là bạn đã dùng gateway hàng ngày được, dù chưa thông minh. M3 là chỗ khó nhất. M5 là chỗ khác biệt.
+
+Thêm `/v1/messages` (giao thức Anthropic) ở M1 hoặc M2 nếu bạn muốn trỏ Claude Code vào — CKey hỗ trợ sẵn upstream. Lưu ý `ANTHROPIC_BASE_URL` dùng **root domain, không có `/v1`**.
 
 ## 7. Rủi ro
 
 | Rủi ro | Xử lý |
 |---|---|
-| Người bán rẻ bất thường là listing hỏng | Đây là lý do M4 tồn tại. Không bao giờ sắp xếp chỉ theo giá; người bán chưa có số liệu thì đánh dấu "chưa kiểm chứng" thay vì xếp đầu |
-| Rò rỉ API key | Key chỉ ở server route + SQLite; `.env*`, `*.db`, `storage/` đã trong `.gitignore` |
-| Người bán biến mất / đổi giá | Sync định kỳ; giữ listing cũ, đánh dấu `stale` thay vì xoá, để lịch sử `run` không mồ côi |
-| Đốt tiền khi thăm dò độ tin cậy | Không gọi thử tự động. Chỉ tính điểm từ request bạn thật sự dùng |
-| `api.xah.io` bị chặn egress | Dùng `ckey.vn/v1`; cho đổi base URL ở Settings |
-| Vilao có thể không giống CKey | `provider.ts` chỉ giả định chuẩn OpenAI. Nếu Vilao không phải marketplace, `seller` để rỗng và mọi thứ khác vẫn chạy |
+| Gateway chết → mọi công cụ chết | Đây là điểm chịu lỗi tập trung. Giữ M1 thật đơn giản; chế độ "bypass" trỏ thẳng một upstream khi định tuyến lỗi |
+| Fallback vòng lặp đốt tiền | Giới hạn cứng số lần thử (3), timeout tổng, và **không bao giờ fallback sau khi đã stream** |
+| Chi phí phồng ngoài dự đoán | Đã đo: prompt 15 token bị phồng thành **914 token** (891 cached). **Không ước tính chi phí theo độ dài prompt** — chỉ tin `usage` trả về |
+| Đối soát tiền lệch | Hai nguồn khác nhau: CKey trả `x_ckey.cost` ngay, Vilao phải query `/api/v2/llm/usage` (`usage.cost` trong response **luôn = 0**) |
+| Nhầm 503 của CKey là sàn sập | Đã đo: CKey trả **503 cho mọi path lạ**. Đừng dùng 503 làm tín hiệu health |
+| Rò rỉ key upstream | Key chỉ ở server + SQLite. **PAT Vilao là full quyền gồm ví tiền** — cân nhắc PAT riêng nếu Vilao cho phép |
+| Timeout quá ngắn | Đã đo **40 giây** cho 104 token output. Đặt timeout rộng, và tách riêng ngưỡng "chunk đầu" với "tổng thời gian" |
+| Rate limit | Vilao API v2 **120 req/phút**; key có `rate_limit_rpm` riêng. Cache catalog, đừng sync mỗi request |
+| Giá đổi giữa chừng | Chốt giá lúc gọi, hiện thời điểm sync trên UI |
 
-## 8. Ngoài phạm vi v1
+## 8. Cân nhắc trước khi tự build
 
-Đăng nhập / nhiều người dùng · deploy public · tự host model · mobile app · giao thức Anthropic và Gemini của CKey (chỉ dùng OpenAI cho v1)
+**LiteLLM proxy** và **one-api / new-api** đều là mã nguồn mở, đã làm sẵn: OpenAI-compatible, nhiều upstream, fallback, đếm tiền, phát hành key. Nếu bạn chỉ cần gộp hai sàn sau một endpoint, cài LiteLLM mất một buổi.
 
-## 9. Bước kế tiếp
+Cái chúng **không** hiểu là phần riêng của hai sàn này:
 
-1. **Một key Vilao** → chạy `./scripts/discover.sh` để xong nốt M0
-2. Xin mở egress cho `api.xah.io` nếu muốn dùng base URL chính thức của CKey
-3. Xác nhận: bắt đầu code M1?
+- Vilao bắt **subscribe từng model vào key** trước khi gọi — không relay nào biết bước này
+- Vilao **công bố success_rate từng listing**; không relay nào biết đọc để định tuyến
+- Cùng một model có **hàng chục listing giá chênh 14.6x** — LiteLLM định tuyến theo *model*, không theo *người bán trong một model*
+
+Ba thứ đó chính là mục 2b, 2c, 2d — và cũng chính là lý do đáng tự build. Nếu bỏ chúng đi thì nên dùng LiteLLM.
+
+Lựa chọn trung dung nếu muốn nhanh: dùng LiteLLM làm lớp vận chuyển, tự viết phần chọn listing rồi bơm xuống dưới dạng cấu hình. Mình **không khuyên** — ranh giới giữa hai bên sẽ rất rối, mà phần vận chuyển lại là phần dễ nhất.
+
+## 9. Việc còn lại của M0
+
+Thử một model video (`veo-3.1-lite` Vilao, 200 VND, thành công 66%) để biết gọi endpoint nào và trả về link hay base64. Chỉ ảnh hưởng M6, **không chặn M1–M5**.
+
+## 10. Bước kế tiếp
+
+Bắt đầu M1. Cần chốt hai điều:
+
+1. Gateway có làm cả `/v1/messages` (Anthropic) không, hay chỉ OpenAI-compatible trước?
+2. M1 gọi cứng upstream nào — CKey (không cần subscribe, đơn giản hơn) hay Vilao?
+
+Gợi ý: **M1 dùng CKey**, vì không vướng bước subscribe. Vilao đưa vào ở M3 cùng lúc với định tuyến.
