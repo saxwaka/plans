@@ -4,6 +4,7 @@ import { openAiErrorBody } from "./errors";
 import { executeRequest } from "./execute";
 import { poolRotation } from "./pool";
 import { resolveModel } from "./resolve";
+import { checkRate } from "./ratelimit";
 import { orderMembers } from "./routing";
 import { measuredStats } from "./stats";
 
@@ -43,6 +44,22 @@ export async function handleV1(request: Request, options: HandleOptions): Promis
   const client = authenticate(bearer);
   if (!client) {
     return json(errorFor(protocol, "invalid_api_key", "Invalid API key.", "authentication_error"), 401);
+  }
+
+  const rate = checkRate(client.id);
+  if (!rate.allowed) {
+    return new Response(
+      JSON.stringify(errorFor(protocol, "rate_limited", `Key exceeded ${rate.limit} requests/minute.`, "rate_limit_error")),
+      {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(rate.retryAfterSec),
+          "X-RateLimit-Limit": String(rate.limit),
+          "X-RateLimit-Remaining": "0",
+        },
+      },
+    );
   }
 
   let body: Record<string, unknown>;

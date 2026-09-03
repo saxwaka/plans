@@ -204,6 +204,55 @@ export ANTHROPIC_BASE_URL=http://localhost:3000   # root, KHÔNG có /v1
 export ANTHROPIC_API_KEY=gw-...
 ```
 
+## Đưa ra mạng (VPS)
+
+Gateway là proxy — không chạy model, chỉ chuyển tiếp stream. Rất nhẹ khi chạy; chỉ nặng lúc build.
+
+| | Tối thiểu | Thoải mái |
+|---|---|---|
+| vCPU | 1 | 2 |
+| RAM | 1 GB **+ swap 1 GB** (hoặc build ở nơi khác) | 2 GB |
+| Disk | 10 GB | 20 GB |
+
+Gói rẻ nhất của Vultr/DigitalOcean (1 GB) hay Viettel IDC / VNPT / BizFly / Vietnix đều đủ.
+Vị trí VN hoặc SG; độ trễ upstream 2–40 s nên vị trí không quyết định gì. Điều duy nhất phải
+tránh: `npm run build` trên máy 1 GB không swap sẽ bị kill — Docker multi-stage bên dưới tách
+build khỏi runtime nên runtime chỉ ~250 MB.
+
+### Ba việc bắt buộc trước khi mở
+
+1. **Khoá bảng điều khiển** — `GATEWAY_UI_PASSWORD`. Không đặt thì `/pools`, `/catalog`,
+   `/usage` mở cho mọi người, kể cả nút xoá pool và nút verify tốn tiền. Nav sẽ hiện cảnh báo
+   vàng "dashboard đang mở" cho tới khi bạn đặt.
+2. **TLS** — Caddy trong compose tự xin chứng chỉ Let's Encrypt. Port 3000 không bao giờ ra
+   internet; chỉ Caddy được publish.
+3. **CORS** — `GATEWAY_CORS_ORIGINS` rỗng (mặc định production) = trình duyệt không gọi thẳng
+   được. App gọi từ backend. Chỉ mở cho origin cụ thể nếu thật sự cần.
+
+Thêm: `GATEWAY_RATE_LIMIT_RPM=60` giới hạn mỗi key 60 req/phút, để một app lỗi không kéo
+sập quota upstream chung (Vilao: 120/phút/token).
+
+### Cài
+
+```bash
+# trên VPS đã có Docker
+git clone <repo> gateway && cd gateway
+cp .env.production.example .env.production   # điền GATEWAY_UI_PASSWORD, key upstream
+echo "GATEWAY_DOMAIN=gateway.ban.example" > .env  # compose đọc biến này cho Caddy
+# trỏ DNS A record của domain về IP VPS, đợi resolve, rồi:
+docker compose up -d --build
+docker compose exec gateway npx tsx scripts/create-key.ts ops --admin
+docker compose exec gateway npx tsx scripts/create-key.ts my-app
+docker compose exec gateway npx tsx scripts/sync.ts
+```
+
+Mở `https://gateway.ban.example` → đăng nhập → tạo pool. App trỏ vào
+`https://gateway.ban.example/v1` với key `gw-…`.
+
+Dữ liệu (SQLite) nằm trong volume `gateway-data`; backup bằng `docker compose cp gateway:/app/data ./backup`.
+
+`/docs`, `/openapi.yaml`, `/llms.txt` vẫn công khai — chúng dành cho người tích hợp và không lộ gì.
+
 ## Vận hành
 
 Gateway là **điểm chịu lỗi tập trung** — nó chết thì mọi công cụ chết.

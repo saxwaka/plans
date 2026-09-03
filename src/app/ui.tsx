@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+import { actionLogout } from "./login/actions";
+import { uiPassword } from "@/lib/gateway/session";
 
 const LINKS = [
   ["/", "Tổng quan"],
@@ -19,6 +21,16 @@ export function Nav({ here }: { here: string }) {
           {label}
         </a>
       ))}
+      <span style={{ flex: 1 }} />
+      {uiPassword() ? (
+        <form action={actionLogout}>
+          <button className="btn" type="submit" style={{ padding: "4px 10px" }}>Đăng xuất</button>
+        </form>
+      ) : (
+        <span className="badge warn" title="Đặt GATEWAY_UI_PASSWORD trước khi đưa ra mạng">
+          dashboard đang mở
+        </span>
+      )}
     </nav>
   );
 }
