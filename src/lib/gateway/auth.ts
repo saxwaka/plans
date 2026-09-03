@@ -2,9 +2,12 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { randomBytes } from "node:crypto";
 import { getDb } from "../db";
 
+export type KeyRole = "client" | "admin";
+
 export interface ClientKey {
   id: string;
   name: string;
+  role: KeyRole;
 }
 
 export function hashKey(raw: string): string {
@@ -23,8 +26,8 @@ export function authenticate(authorization: string | null): ClientKey | null {
 
   const candidate = Buffer.from(hashKey(raw), "hex");
   const rows = getDb()
-    .prepare<[], { id: string; name: string; key_hash: string }>(
-      "SELECT id, name, key_hash FROM client_key WHERE active = 1",
+    .prepare<[], { id: string; name: string; key_hash: string; role: KeyRole }>(
+      "SELECT id, name, key_hash, role FROM client_key WHERE active = 1",
     )
     .all();
 
@@ -33,8 +36,19 @@ export function authenticate(authorization: string | null): ClientKey | null {
   for (const row of rows) {
     const stored = Buffer.from(row.key_hash, "hex");
     if (stored.length === candidate.length && timingSafeEqual(stored, candidate)) {
-      return { id: row.id, name: row.name };
+      return { id: row.id, name: row.name, role: row.role ?? "client" };
     }
   }
   return null;
+}
+
+/**
+ * Management calls need an admin key. Creating keys, deleting pools and
+ * running a verify sweep (which spends real money) are a different class of
+ * action from asking a model a question, so an ordinary gateway key is not
+ * enough — even though admin keys can also call /v1.
+ */
+export function authenticateAdmin(authorization: string | null): ClientKey | null {
+  const key = authenticate(authorization);
+  return key?.role === "admin" ? key : null;
 }

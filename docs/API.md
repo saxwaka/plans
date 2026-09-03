@@ -322,7 +322,91 @@ Real examples:
 {"error":{"code":"BAD_REQUEST","message":"messages must be an array","type":"invalid_request_error"}}
 ```
 
-## 9. Not supported
+## 9. Management API (`/api/*`)
+
+Everything the web UI does, as JSON — so an agent can create pools, add members, sync the
+catalog and issue keys without a human clicking. **Requires a key with `role: admin`**; an
+ordinary `gw-` key gets `403 admin_required`. Create one with `npm run key:create ops -- --admin`
+or `POST /api/keys` from an existing admin key.
+
+Errors: `{"error":{"code":"…","message":"…"}}`. `401 missing_key` / `401 invalid_key` /
+`403 admin_required` / `404 not_found` / `400 <validation>` / `409 exists`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/catalog` | search listings; same filters as the UI, as query params |
+| POST | `/api/catalog/sync` | refresh both marketplaces, re-apply pool rules |
+| GET | `/api/pools` | pool summaries |
+| POST | `/api/pools` | create `{ name, strategy? }` |
+| GET | `/api/pools/:name` | full detail: members with score/reliability/last probe, candidates, spend, verify estimate |
+| PATCH | `/api/pools/:name` | settings and rule, any subset |
+| DELETE | `/api/pools/:name` | |
+| POST | `/api/pools/:name/members` | add `{ listing_id }` (appended last, active) |
+| PATCH | `/api/pools/:name/members` | `{ listing_id, state? \| position? \| weight? }` |
+| DELETE | `/api/pools/:name/members` | `{ listing_id }` |
+| POST | `/api/pools/:name/verify` | probe every member — **spends money**; read `verify_estimate` first |
+| GET | `/api/usage` | spend today, by day, by listing; `?recent=1` for raw runs |
+| POST | `/api/reconcile` | pull Vilao billing, price unpriced runs |
+| GET / POST | `/api/keys` | list / create `{ name, role? }` — raw key returned **once** |
+| DELETE | `/api/keys/:id` | revoke; refuses to revoke the calling key |
+
+### 9.1 Catalog search
+
+```
+GET /api/catalog?platform=vilao&search=opus&max_price_in=500&min_success_rate=98&min_total_requests=1000&include_unmeasured=0&limit=50
+```
+
+Query parameters: `platform` (`ckey`\|`vilao`), `kind`, `seller`, `search` (substring on name),
+`max_price_in`, `max_price_request` (VND), `min_context`, `min_success_rate` (%),
+`min_total_requests`, `max_latency_ms`, `supports_tools=1`, `verified_only=1`,
+`include_unmeasured` (default `1`), `include_stale=1`, `limit` (≤1000).
+
+Response: `{ total, matching, filter, data: Listing[] }`. **Always check `matching` against
+`total`.** Quality filters are sparse: `include_unmeasured=0` removes every CKey listing
+(CKey publishes no stats), and `verified_only=1` leaves 16 of ~1100.
+
+A `Listing` carries `id` (use this as `listing_id`), `platform`, `seller`, `display_name`,
+`base_model`, `price_in`/`price_out` (VND per 1M tokens), `price_request`, `price_floor`,
+`context_len`, `success_rate` (Vilao only; `null` on CKey), `total_requests`, `stale`.
+
+Listing ids contain `:` and `/` — `ckey:dungcsnd113/claude-opus-5`,
+`vilao:c06bc6a1-…:deepseek-v4-flash` — so they always travel in a JSON body, never in a path.
+
+### 9.2 Building a pool end to end
+
+```bash
+A="Authorization: Bearer gw-<admin>"
+# 1. find proven cheap listings for the model you want
+curl -s "$GW/api/catalog?search=deepseek-v4-flash&min_success_rate=98&min_total_requests=1000&include_unmeasured=0" -H "$A"
+# 2. create the pool — its name is what apps will send as `model`
+curl -s -X POST $GW/api/pools -H "$A" -d '{"name":"fast","strategy":"cheapest"}'
+# 3. add members (cheap first; add an expensive-but-reliable one last as the safety net)
+curl -s -X POST $GW/api/pools/fast/members -H "$A" -d '{"listing_id":"vilao:c06bc6a1-d4ae-4971-bb3b-94b0f7a61471:deepseek-v4-flash"}'
+# 4. optional: cap spend and let a rule queue new matching sellers for review
+curl -s -X PATCH $GW/api/pools/fast -H "$A" -d '{"daily_budget":20000,"rule":{"search":"deepseek-v4-flash","minSuccessRate":98},"auto_admit":false}'
+# 5. optional: probe every member (costs verify_estimate.cost at most)
+curl -s -X POST "$GW/api/pools/fast/verify" -H "$A"
+# 6. apps now call /v1 with model "fast"
+```
+
+`PATCH /api/pools/:name` accepts `strategy`, `max_attempts`, `daily_budget`, `monthly_budget`,
+`max_price_per_request` (numbers or `null` to clear), `rule` (a catalog filter object using the
+camelCase names from `ListingFilter`: `platform`, `search`, `maxPriceIn`, `minSuccessRate`,
+`minTotalRequests`, `includeUnmeasured`, …, or `null` to remove), `auto_admit` (boolean).
+
+`PATCH …/members` fields: `state` — `active` (on), `blocked` (off, keeps its place), `candidate`
+(back to the review queue); `position` — 1-based slot in the chain; `weight` — for the
+`weighted` strategy. Admitting a candidate appends it to the end of the chain.
+
+### 9.3 Verify
+
+`POST /api/pools/:name/verify?include_candidates=1` calls every member once with a one-token
+request and returns `{ quoted_max_vnd, spent_vnd, alive, total, results[] }`. Each result has
+`listingId`, `ok`, `latencyMs`, `costVnd`, `errorCode`. Read `verify_estimate.cost` from
+`GET /api/pools/:name` first — a one-token probe is billed at the seller's minimum charge, so a
+17-member sweep can cost 1,300 VND. Failed probes are not billed, so `spent_vnd ≤ quoted_max_vnd`.
+
+## 10. Not supported
 
 - Per-request routing overrides (`models: [...]`, `provider: {...}` as in OpenRouter). Routing
   is configured per pool by the operator.
@@ -332,7 +416,7 @@ Real examples:
 - TLS. Run behind your own reverse proxy if the gateway leaves localhost.
 - Multi-tenant auth. Keys identify apps, nothing more.
 
-## 10. SDK snippets
+## 11. SDK snippets
 
 **Node / TypeScript (`openai`)**
 
@@ -372,7 +456,7 @@ export ANTHROPIC_API_KEY=gw-...
 
 **Vision** works with `image_url` content parts (data URLs verified).
 
-## 11. Checklist for an integrating agent
+## 12. Checklist for an integrating agent
 
 1. `GET /v1/models` at startup; pick a pool (`gateway.kind == "pool"`). Fail loudly if none.
 2. Send `model: <pool name>`. Never hard-code a seller-prefixed listing id.
@@ -380,3 +464,5 @@ export ANTHROPIC_API_KEY=gw-...
 4. Read cost from `usage.cost`; log `X-Gateway-Listing` and `X-Gateway-Attempts`.
 5. In streams, never drop frames with empty `choices`; end on `[DONE]` / `message_stop`.
 6. Keep the gateway key server-side.
+7. To manage pools programmatically use `/api/*` with an **admin** key; keep that key out of
+   any app that only needs to call models.

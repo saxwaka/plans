@@ -21,6 +21,8 @@ const ADDITIONS: [table: string, column: string, definition: string][] = [
   ["run", "kind", "TEXT NOT NULL DEFAULT 'live'"],
   // Which API surface served the run: chat, messages, embeddings, responses…
   ["run", "endpoint", "TEXT"],
+  // 'client' may call /v1; 'admin' may also drive the management API under /api.
+  ["client_key", "role", "TEXT NOT NULL DEFAULT 'client'"],
 ];
 
 function migrate(handle: Database.Database): void {

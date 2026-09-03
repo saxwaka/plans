@@ -123,7 +123,8 @@ request vừa rồi thực sự chạy qua đâu.
 npm install
 cp .env.example .env.local     # điền CKEY_API_KEY
 npm run db:init
-npm run key:create cursor      # key chỉ hiện MỘT LẦN
+npm run key:create cursor      # key cho app gọi model — chỉ hiện MỘT LẦN
+npm run key:create ops -- --admin   # key admin: thêm quyền dùng Management API /api/*
 npm run sync                   # kéo catalog hai sàn về (và áp dụng luật pool)
 npm run build && npm run start
 ```
@@ -138,6 +139,13 @@ Trỏ công cụ vào:
 Dashboard ở `http://localhost:3000`. Tạo pool ở `/pools`, thêm thành viên từ `/catalog`.
 
 Bỏ trống `VILAO_API_KEY` và `VILAO_PAT` thì gateway chạy thuần CKey, không lỗi.
+
+### Management API
+
+Mọi thứ UI làm được đều có ở `/api/*` dưới dạng JSON: tìm listing, sync, tạo/sửa/xoá pool,
+thêm/bật/tắt/sắp thành viên, verify, xem chi tiêu, cấp/thu hồi key. **Chỉ key `admin`** gọi
+được — key thường nhận 403. Tạo key, xoá pool, chạy verify tốn tiền là một lớp hành động khác
+với hỏi model, nên không dùng chung quyền. Chi tiết và ví dụ curl trong `/docs` §9.
 
 ### Tài liệu cho app khác tích hợp
 
