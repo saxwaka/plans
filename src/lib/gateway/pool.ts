@@ -25,7 +25,7 @@ export function findPoolByName(name: string): Pool | undefined {
   return getDb().prepare("SELECT * FROM pool WHERE name = ?").get(name) as Pool | undefined;
 }
 
-/** Active members in call order. Stale listings stay listed but sort last. */
+/** Members the router may call, in order. Stale listings stay listed but sort last. */
 export function poolMembers(poolId: string): PoolMember[] {
   return getDb()
     .prepare(
@@ -33,6 +33,24 @@ export function poolMembers(poolId: string): PoolMember[] {
          FROM pool_member m JOIN listing l ON l.id = m.listing_id
         WHERE m.pool_id = ? AND m.state = 'active'
         ORDER BY l.stale ASC, m.position ASC`,
+    )
+    .all(poolId) as PoolMember[];
+}
+
+/**
+ * Every member in the ordered chain, enabled or not.
+ *
+ * Disabled members have to stay visible: a listing switched off and then hidden
+ * is a listing nobody can ever switch back on. Candidates are excluded — they
+ * are not part of the chain until admitted.
+ */
+export function chainMembers(poolId: string): PoolMember[] {
+  return getDb()
+    .prepare(
+      `SELECT l.*, m.position, m.weight, m.state
+         FROM pool_member m JOIN listing l ON l.id = m.listing_id
+        WHERE m.pool_id = ? AND m.state IN ('active', 'blocked')
+        ORDER BY m.position ASC`,
     )
     .all(poolId) as PoolMember[];
 }
@@ -69,22 +87,65 @@ export function removeMember(poolId: string, listingId: string): void {
   getDb().prepare("DELETE FROM pool_member WHERE pool_id = ? AND listing_id = ?").run(poolId, listingId);
 }
 
-/** Swaps a member with its neighbour so order can be nudged without drag-and-drop. */
-export function moveMember(poolId: string, listingId: string, direction: -1 | 1): void {
+/** Chain members in order, used by every reordering operation. */
+function orderedChain(poolId: string): string[] {
+  return (
+    getDb()
+      .prepare(
+        `SELECT listing_id FROM pool_member
+          WHERE pool_id = ? AND state IN ('active', 'blocked') ORDER BY position`,
+      )
+      .all(poolId) as { listing_id: string }[]
+  ).map((r) => r.listing_id);
+}
+
+/** Rewrites positions as 1..n so no gaps or ties survive a reorder. */
+function renumber(poolId: string, order: string[]): void {
   const db = getDb();
-  const members = db
-    .prepare("SELECT listing_id, position FROM pool_member WHERE pool_id = ? ORDER BY position")
-    .all(poolId) as { listing_id: string; position: number }[];
-
-  const index = members.findIndex((m) => m.listing_id === listingId);
-  const target = index + direction;
-  if (index === -1 || target < 0 || target >= members.length) return;
-
-  const update = db.prepare("UPDATE pool_member SET position = ? WHERE pool_id = ? AND listing_id = ?");
+  const update = db.prepare(
+    "UPDATE pool_member SET position = ? WHERE pool_id = ? AND listing_id = ?",
+  );
   db.transaction(() => {
-    update.run(members[target].position, poolId, members[index].listing_id);
-    update.run(members[index].position, poolId, members[target].listing_id);
+    order.forEach((listingId, index) => update.run(index + 1, poolId, listingId));
   })();
+}
+
+/**
+ * Nudges a member one place up or down.
+ *
+ * Reordering works on the chain alone, not on every row in the pool. Candidates
+ * carry positions too, so a plain neighbour swap could trade places with a
+ * queued listing that is not on screen — the button would appear to do nothing.
+ */
+export function moveMember(poolId: string, listingId: string, direction: -1 | 1): void {
+  const order = orderedChain(poolId);
+  const index = order.indexOf(listingId);
+  const target = index + direction;
+  if (index === -1 || target < 0 || target >= order.length) return;
+
+  [order[index], order[target]] = [order[target], order[index]];
+  renumber(poolId, order);
+}
+
+/** Moves a member to an explicit 1-based slot, for pools too long to nudge. */
+export function setMemberPosition(poolId: string, listingId: string, position: number): void {
+  const order = orderedChain(poolId);
+  const index = order.indexOf(listingId);
+  if (index === -1) return;
+
+  const target = Math.max(0, Math.min(order.length - 1, Math.round(position) - 1));
+  if (target === index) return;
+
+  order.splice(index, 1);
+  order.splice(target, 0, listingId);
+  renumber(poolId, order);
+}
+
+/** Turns a member off without losing its place, or back on again. */
+export function toggleMember(poolId: string, listingId: string, enabled: boolean): void {
+  getDb()
+    .prepare("UPDATE pool_member SET state = ? WHERE pool_id = ? AND listing_id = ?")
+    .run(enabled ? "active" : "blocked", poolId, listingId);
 }
 
 export interface PoolSettings {
@@ -160,7 +221,17 @@ export function candidates(poolId: string): PoolMember[] {
 }
 
 export function setMemberState(poolId: string, listingId: string, state: string): void {
-  getDb()
-    .prepare("UPDATE pool_member SET state = ? WHERE pool_id = ? AND listing_id = ?")
-    .run(state, poolId, listingId);
+  const db = getDb();
+  db.prepare("UPDATE pool_member SET state = ? WHERE pool_id = ? AND listing_id = ?").run(
+    state,
+    poolId,
+    listingId,
+  );
+  // An admitted candidate joins the end of the chain. Its queued position was
+  // only a sort key for the review list and would otherwise drop it into the
+  // middle of the running order.
+  if (state === "active" || state === "blocked") {
+    const order = orderedChain(poolId).filter((id) => id !== listingId);
+    renumber(poolId, [...order, listingId]);
+  }
 }

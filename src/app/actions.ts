@@ -5,7 +5,7 @@ import { syncAll } from "@/lib/gateway/catalog";
 import { reconcileVilao } from "@/lib/gateway/reconcile";
 import { applyRules } from "@/lib/gateway/rules";
 import { verifyPool } from "@/lib/gateway/verify";
-import { setMemberState, setRule } from "@/lib/gateway/pool";
+import { setMemberPosition, setMemberState, setRule, toggleMember } from "@/lib/gateway/pool";
 import { loadConfig } from "@/lib/gateway/config";
 import {
   addMember, createPool, deletePool, moveMember, removeMember, setMemberWeight, updatePool,
@@ -105,4 +105,21 @@ export async function actionVerifyPool(formData: FormData) {
   });
   revalidatePath("/pools");
   revalidatePath("/usage");
+}
+
+export async function actionToggleMember(formData: FormData) {
+  toggleMember(
+    String(formData.get("poolId")),
+    String(formData.get("listingId")),
+    formData.get("enabled") === "1",
+  );
+  revalidatePath("/pools");
+}
+
+export async function actionSetPosition(formData: FormData) {
+  const position = Number(formData.get("position"));
+  if (Number.isFinite(position) && position >= 1) {
+    setMemberPosition(String(formData.get("poolId")), String(formData.get("listingId")), position);
+  }
+  revalidatePath("/pools");
 }

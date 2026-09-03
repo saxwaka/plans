@@ -5,7 +5,9 @@ import {
   actionRemoveMember,
   actionMemberState,
   actionSetRule,
+  actionSetPosition,
   actionSetWeight,
+  actionToggleMember,
   actionUpdatePool,
   actionVerifyPool,
   syncCatalog,
@@ -13,7 +15,7 @@ import {
 import { poolSpend } from "@/lib/gateway/budget";
 import { estimatedCost, reliability } from "@/lib/gateway/routing";
 import { btn, c, input, Nav, Td, Th, vnd } from "../ui";
-import { candidates, getRule, listPools, poolMembers } from "@/lib/gateway/pool";
+import { candidates, chainMembers, getRule, listPools } from "@/lib/gateway/pool";
 import { measuredStats } from "@/lib/gateway/stats";
 import { lastProbes, verifyEstimate } from "@/lib/gateway/verify";
 import { countAll } from "@/lib/gateway/filter";
@@ -56,7 +58,10 @@ export default function Pools() {
       )}
 
       {pools.map((pool) => {
-        const members = poolMembers(pool.id);
+        // The chain includes disabled members: hiding a listing you switched off
+        // would leave no way to switch it back on.
+        const members = chainMembers(pool.id);
+        const activeCount = members.filter((m) => m.state === "active").length;
         const p = pool as typeof pool & {
           max_attempts?: number;
           daily_budget?: number | null;
@@ -73,7 +78,8 @@ export default function Pools() {
             <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginBottom: "0.6rem" }}>
               <h2 style={{ fontSize: "0.95rem", margin: 0 }}>{pool.name}</h2>
               <span style={{ color: c.dim, fontSize: "0.72rem" }}>
-                {pool.strategy} · {members.length} thành viên
+                {pool.strategy} · {activeCount} bật
+                {members.length > activeCount && ` · ${members.length - activeCount} tắt`}
               </span>
               <form action={actionVerifyPool} style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
                 <input type="hidden" name="poolId" value={pool.id} />
@@ -135,50 +141,6 @@ export default function Pools() {
               </span>
             </form>
 
-            <details style={{ marginBottom: "0.8rem" }}>
-              <summary style={{ fontSize: "0.72rem", color: c.dim, cursor: "pointer" }}>
-                luật tự nhận thành viên {rule ? "· đang bật" : "· tắt"}
-                {queue.length > 0 && (
-                  <span style={{ color: c.warn }}> · {queue.length} chờ duyệt</span>
-                )}
-              </summary>
-              <form action={actionSetRule} style={{ marginTop: "0.5rem" }}>
-                <input type="hidden" name="poolId" value={pool.id} />
-                <textarea
-                  name="ruleJson"
-                  rows={3}
-                  placeholder='{"platform":"ckey","search":"opus","maxPriceIn":500}'
-                  defaultValue={rule ? JSON.stringify(rule.filter) : ""}
-                  style={{ ...input, width: "100%", fontFamily: "inherit", cursor: "text" }}
-                />
-                <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", marginTop: "0.4rem" }}>
-                  <label style={{ fontSize: "0.7rem", color: c.dim }}>
-                    <input type="checkbox" name="autoAdmit" value="1" defaultChecked={rule?.autoAdmit} />{" "}
-                    tự nhận thẳng (bỏ hàng chờ duyệt)
-                  </label>
-                  <button style={btn} type="submit">lưu luật</button>
-                </div>
-              </form>
-            </details>
-
-            {queue.length > 0 && (
-              <div style={{ marginBottom: "0.8rem", fontSize: "0.74rem" }}>
-                <div style={{ color: c.warn, marginBottom: "0.3rem" }}>
-                  {queue.length} listing khớp luật, chờ bạn duyệt:
-                </div>
-                {queue.slice(0, 12).map((q) => (
-                  <div key={q.id} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.15rem 0" }}>
-                    <span style={{ minWidth: 300 }}>
-                      {q.platform} · {q.display_name} · in={vnd(q.price_in)}
-                    </span>
-                    <span style={{ minWidth: 110 }}>{probeCell(probes.get(q.id))}</span>
-                    <StateButton poolId={pool.id} listingId={q.id} state="active" label="nhận" />
-                    <StateButton poolId={pool.id} listingId={q.id} state="blocked" label="chặn" />
-                  </div>
-                ))}
-              </div>
-            )}
-
             {members.length === 0 ? (
               <p style={{ color: c.warn, fontSize: "0.75rem" }}>
                 Pool rỗng — gọi tên này sẽ trả 409. Thêm thành viên từ catalog.
@@ -187,16 +149,54 @@ export default function Pools() {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.76rem" }}>
                 <thead>
                   <tr style={{ textAlign: "left", color: c.dim }}>
-                    <Th>#</Th><Th>Sàn</Th><Th>Người bán</Th><Th>Model</Th>
+                    <Th>Vị trí</Th><Th>Bật</Th><Th>Sàn</Th><Th>Người bán</Th><Th>Model</Th>
                     <Th>In</Th><Th>Out</Th><Th>/req</Th><Th>Success</Th><Th>Request</Th>
                     <Th>Ước tính</Th><Th>Điểm</Th><Th>Kiểm tra</Th><Th>W</Th><Th />
                   </tr>
                 </thead>
                 <tbody>
                   {members.map((m, i) => (
-                    <tr key={m.id} style={{ borderTop: `1px solid ${c.line}` }}>
+                    <tr
+                      key={m.id}
+                      style={{
+                        borderTop: `1px solid ${c.line}`,
+                        // A disabled row stays readable but visibly out of play.
+                        opacity: m.state === "active" ? 1 : 0.4,
+                      }}
+                    >
                       <Td>
-                        <span style={{ color: i === 0 ? c.ok : c.dim }}>{i + 1}</span>
+                        {/* Typing a number beats clicking the arrow eight times
+                            once a pool has more than a handful of members. */}
+                        <form action={actionSetPosition}>
+                          <input type="hidden" name="poolId" value={pool.id} />
+                          <input type="hidden" name="listingId" value={m.id} />
+                          <input
+                            style={{
+                              ...input,
+                              width: 34,
+                              textAlign: "center",
+                              color: i === 0 && m.state === "active" ? c.ok : undefined,
+                            }}
+                            name="position"
+                            defaultValue={i + 1}
+                            title="gõ số rồi Enter để nhảy tới vị trí đó"
+                          />
+                        </form>
+                      </Td>
+                      <Td>
+                        {/* Off keeps the member and its place; × removes it. */}
+                        <form action={actionToggleMember}>
+                          <input type="hidden" name="poolId" value={pool.id} />
+                          <input type="hidden" name="listingId" value={m.id} />
+                          <input type="hidden" name="enabled" value={m.state === "active" ? "0" : "1"} />
+                          <button
+                            style={{ ...btn, color: m.state === "active" ? c.ok : c.dim, minWidth: 34 }}
+                            type="submit"
+                            title={m.state === "active" ? "tắt — giữ nguyên vị trí" : "bật lại"}
+                          >
+                            {m.state === "active" ? "on" : "off"}
+                          </button>
+                        </form>
                       </Td>
                       <Td>{m.platform}</Td>
                       <Td>{m.seller ?? "—"}</Td>
@@ -256,6 +256,51 @@ export default function Pools() {
                 </tbody>
               </table>
             )}
+
+            <details style={{ marginBottom: "0.8rem" }}>
+              <summary style={{ fontSize: "0.72rem", color: c.dim, cursor: "pointer" }}>
+                luật tự nhận thành viên {rule ? "· đang bật" : "· tắt"}
+                {queue.length > 0 && (
+                  <span style={{ color: c.warn }}> · {queue.length} chờ duyệt</span>
+                )}
+              </summary>
+              <form action={actionSetRule} style={{ marginTop: "0.5rem" }}>
+                <input type="hidden" name="poolId" value={pool.id} />
+                <textarea
+                  name="ruleJson"
+                  rows={3}
+                  placeholder='{"platform":"ckey","search":"opus","maxPriceIn":500}'
+                  defaultValue={rule ? JSON.stringify(rule.filter) : ""}
+                  style={{ ...input, width: "100%", fontFamily: "inherit", cursor: "text" }}
+                />
+                <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", marginTop: "0.4rem" }}>
+                  <label style={{ fontSize: "0.7rem", color: c.dim }}>
+                    <input type="checkbox" name="autoAdmit" value="1" defaultChecked={rule?.autoAdmit} />{" "}
+                    tự nhận thẳng (bỏ hàng chờ duyệt)
+                  </label>
+                  <button style={btn} type="submit">lưu luật</button>
+                </div>
+              </form>
+            </details>
+
+            {queue.length > 0 && (
+              <div style={{ marginBottom: "0.8rem", fontSize: "0.74rem" }}>
+                <div style={{ color: c.warn, marginBottom: "0.3rem" }}>
+                  {queue.length} listing khớp luật, chờ bạn duyệt:
+                </div>
+                {queue.slice(0, 12).map((q) => (
+                  <div key={q.id} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.15rem 0" }}>
+                    <span style={{ minWidth: 300 }}>
+                      {q.platform} · {q.display_name} · in={vnd(q.price_in)}
+                    </span>
+                    <span style={{ minWidth: 110 }}>{probeCell(probes.get(q.id))}</span>
+                    <StateButton poolId={pool.id} listingId={q.id} state="active" label="nhận" />
+                    <StateButton poolId={pool.id} listingId={q.id} state="blocked" label="chặn" />
+                  </div>
+                ))}
+              </div>
+            )}
+
           </section>
         );
       })}
