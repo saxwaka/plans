@@ -1,9 +1,13 @@
 node_modules/
 .next/
+next-env.d.ts
+*.tsbuildinfo
+
 .env
 .env.*
 !.env.example
-*.db
-*.db-journal
-storage/
+
+data/*.db
+data/*.db-*
+
 docs/samples/*.json

@@ -1,0 +1,27 @@
+export type Platform = "ckey" | "vilao";
+
+/** What an upstream reports once a call has finished, however it finished. */
+export interface CallOutcome {
+  platform: Platform;
+  listingId: string;
+  requestedModel: string;
+  actualModel?: string;
+  stream: boolean;
+  tokensIn?: number;
+  tokensOut?: number;
+  costVnd?: number;
+  ttfbMs?: number;
+  latencyMs?: number;
+  status: "ok" | "error" | "client_abort";
+  errorCode?: string;
+  httpStatus?: number;
+  upstreamRequestId?: string;
+}
+
+/** Usage as it appears in an OpenAI-shaped response, plus CKey's cost extension. */
+export interface UpstreamUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+  x_ckey?: { cost?: number; request_id?: string };
+}
