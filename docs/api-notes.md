@@ -280,31 +280,80 @@ CKey đắt hơn đều **20%**. Đây chính là kiểu so sánh mà app cần 
 
 ---
 
-## CKey — key không hợp lệ (đã loại trừ nguyên nhân mạng)
+## CKey — khảo sát XONG
 
-Egress tới `api.xah.io` đã mở. Test **cả hai host**, cả hai dạng key:
+Key mới (dạng `sk-...`) chạy được. Key cũ 48 ký tự hex không tiền tố đúng là sai, không phải lỗi host.
 
-| Host | Key thô | `sk-` + key |
-|---|---|---|
-| `ckey.vn/v1` | 401 invalid | 401 invalid |
-| `api.xah.io/v1` | 401 invalid | 401 invalid |
+### Base URL
 
-Host chính thức cũng từ chối, nên **không phải lỗi host**. Bằng chứng phụ cho thấy key *có* được đọc — đổi header thì thông báo đổi theo:
+`https://api.xah.io/v1` (chính thức) và `https://ckey.vn/v1` trả cùng một catalog 498 model, danh sách trùng khít. Auth: `Authorization: Bearer sk-...`.
 
-| Header | Thông báo |
-|---|---|
-| `Authorization: Bearer <k>` | "The API key is invalid." |
-| `x-api-key: <k>` | "The API key is invalid." |
-| `api-key: <k>` | "A valid API key is required." |
-| `Authorization: <k>` (thiếu Bearer) | "A valid API key is required." |
+### Response kèm sẵn chi phí — tiện hơn Vilao
 
-"Invalid" = tìm thấy key rồi loại. "Required" = không thấy key nào. Vậy header đúng, chuỗi key sai.
+```json
+"usage": {"prompt_tokens":24, "completion_tokens":60, "total_tokens":84,
+          "x_ckey": {"cost": 23.4, "request_id": "req_33b1c9a77873244f92b6bdea"}}
+```
 
-**Cần copy lại key từ dashboard CKey.** Chuỗi đã thử là 48 ký tự hex không tiền tố; docs của họ dùng `sk-...`.
+`usage.x_ckey.cost` là tiền thật của request, ngay trong response. Vilao thì `usage.cost` **luôn bằng 0**, phải gọi thêm `/api/v2/llm/usage`. Với CKey không cần gọi thêm gì.
 
-`ckey.vn/v1` và `api.xah.io/v1` trả đúng cùng 498 model, danh sách trùng khít — cùng backend.
+### ĐÃ CHỐT: cũng là VND trên 1 TRIỆU token
+
+Gọi thật `dungcsnd113/claude-opus-5`, giá listing lúc gọi:
+
+```json
+{"input":390, "output":780, "per_request":11.7, "min_charge_per_request":23.4, "unit":"VND"}
+```
+
+Kết quả: `prompt_tokens 24`, `completion_tokens 60`, **cost 23.4** — đúng bằng `min_charge_per_request`.
+
+- Giả thuyết **VND/1M**: token cost = `24/1e6×390 + 60/1e6×780 = 0.056 VND`, dưới sàn 23.4 → tính 23.4. **Khớp.**
+- Giả thuyết **VND/1K**: token cost = `24/1000×390 + 60/1000×780 = 56.16 VND`, **vượt** sàn 23.4 → phải tính 56.16. Thực tế tính 23.4. **Loại.**
+
+Cùng logic đã dùng cho Vilao, và ra cùng kết luận. **Hai sàn dùng chung một thang giá: VND trên 1 triệu token.**
+
+Còn một chi tiết chưa tách được: `per_request` (11.7) và `min_charge_per_request` (23.4) là hai trường riêng, chưa rõ `per_request` có cộng thêm vào giá token hay không — vì với listing này, sàn luôn thắng ở mọi độ dài prompt hợp lý (800 token output cũng chỉ ra 0.62 VND). Không ảnh hưởng thực tế: cứ tính `max(min_charge, per_request + token_cost)` là an toàn.
+
+### Không có endpoint số dư
+
+Mọi path lạ đều bị proxy thẳng lên upstream và trả **503 "The upstream AI gateway is unavailable"**, không phải 404:
+
+```
+/v1/dashboard/billing/subscription   503
+/v1/credits  /v1/balance  /v1/me     503
+```
+
+Lưu ý khi viết code: **503 ở CKey không có nghĩa là sàn đang sập** — rất có thể chỉ là gọi sai đường dẫn. Đừng dùng 503 làm tín hiệu health check.
+
+Theo dõi chi tiêu với CKey phải cộng dồn `x_ckey.cost` từ từng response, vì không có nguồn nào khác.
+
+### Giá listing đổi trong lúc khảo sát
+
+Snapshot lúc đầu: `dungcsnd113/claude-opus-5` có `per_request=11.7`, không có `min_charge_per_request`.
+Vài giờ sau: cùng listing đó có thêm `min_charge_per_request: 23.4`.
+
+Người bán đổi giá ngay giữa phiên làm việc. Củng cố kết luận trước: **giá phải được chốt lại tại thời điểm gọi**, và bảng so giá cần hiện thời điểm sync.
 
 ---
+
+## Đối chiếu hai sàn
+
+| | CKey | Vilao |
+|---|---|---|
+| Base URL suy luận | `api.xah.io/v1` | `api.vilao.ai/v1` |
+| Header | `Authorization: Bearer` | **`x-api-key`** |
+| Catalog | `/v1/models`, **public không cần key** | `/api/v2/llm/marketplace/models`, cần PAT |
+| Số listing | 498 | 604 |
+| Người bán | 69 | 64 |
+| Trung vị chênh giá | 4.7x | **14.6x** |
+| Đơn vị giá | VND / 1M token | VND / 1M token |
+| Chi phí mỗi request | `usage.x_ckey.cost` trong response | `/api/v2/llm/usage`, `usage.cost` = 0 |
+| Số dư | **không có endpoint** | `/api/v2/account/balance` |
+| Số liệu tin cậy | **không công bố gì** | `success_rate`, `total_requests`, `avg_latency_ms`, `avg_rating`, `verified` |
+| Cần subscribe trước? | Không | **Có**, qua API v2 |
+| Ngân sách theo ngày/tháng | không | có sẵn trên mỗi key |
+
+Hai sàn **bổ sung cho nhau chứ không thay thế nhau**: CKey mở catalog cho ai cũng xem được nhưng mù về chất lượng; Vilao bắt xác thực nhưng cho biết cái nào thật sự chạy được.
 
 ## Ba envelope lỗi khác nhau
 
@@ -314,19 +363,12 @@ Vilao v1   : {"error":{"code",    "message",    "type"}}
 Vilao v2   : {"error":{"code",    "message",    "hint"|"suggestion"}}
 ```
 
-Cần hàm chuẩn hoá đọc được cả ba.
-
-## Catalog thay đổi liên tục
-
-Hai snapshot CKey cách nhau khoảng một giờ: vẫn 498 model, nhưng `tdsang1999/gemini-3.7-flash` biến mất, `tdsang1999/gemini-3.7-flash-high` xuất hiện. Khi sync **không xoá cứng** — đánh dấu `stale` để lịch sử `run` không mồ côi.
-
 ---
 
 ## Việc còn lại của M0
 
-1. **CKey** — copy lại API key cho đúng. Đây là thứ duy nhất còn chặn
-2. Thử một model video (Veo hoặc wan-t2v) xem gọi bằng endpoint nào, trả link hay base64 — tốn khoảng 200–250 VND, chưa làm vì bạn dặn tiết kiệm
+Chỉ còn một: **thử một model video** xem gọi bằng endpoint nào (`/v1/chat/completions` hay `/v1/videos/generations`) và trả về link hay base64. Rẻ nhất là `veo-3.1-lite` của Vilao, 200 VND — nhưng tỷ lệ thành công chỉ 66%, nên có thể mất tiền mà không ra clip. Chờ bạn đồng ý.
 
 ## Bảo mật
 
-Các key và PAT đã dán vào chat nên nằm trong transcript session này. Mình **không** ghi xuống đĩa và **không** commit (đã grep toàn repo). **PAT là full quyền gồm cả ví tiền — nên thu hồi ngay** ở `/console/user/api-tokens` sau khi xong. Từ giờ truyền qua biến môi trường.
+Các key và PAT đã dán vào chat nên nằm trong transcript session này. Mình **không** ghi xuống đĩa và **không** commit (đã grep toàn repo). **PAT Vilao là full quyền gồm cả ví tiền — thu hồi ngay** ở `/console/user/api-tokens` sau khi xong. Từ giờ truyền qua biến môi trường.
