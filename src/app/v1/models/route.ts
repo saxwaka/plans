@@ -1,16 +1,15 @@
 import { authenticate } from "@/lib/gateway/auth";
-import { loadConfig } from "@/lib/gateway/config";
 import { openAiErrorBody } from "@/lib/gateway/errors";
-import { listModels } from "@/lib/gateway/upstream/ckey";
+import { listPools } from "@/lib/gateway/pool";
+import { queryListings } from "@/lib/gateway/filter";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// The catalog moves slowly; a measured snapshot changed one listing in an hour.
-// Cache briefly so a client that lists models on every request does not hammer CKey.
-let cache: { at: number; body: string } | null = null;
-const TTL_MS = 5 * 60_000;
-
+/**
+ * Advertises pools first — those are the names worth choosing in a client's
+ * model dropdown. Raw listings follow so a passthrough call still autocompletes.
+ */
 export async function GET(request: Request): Promise<Response> {
   if (!authenticate(request.headers.get("authorization"))) {
     return new Response(
@@ -19,18 +18,26 @@ export async function GET(request: Request): Promise<Response> {
     );
   }
 
-  if (cache && Date.now() - cache.at < TTL_MS) {
-    return new Response(cache.body, {
-      headers: { "Content-Type": "application/json", "X-Gateway-Cache": "hit" },
-    });
-  }
+  const created = Math.floor(Date.now() / 1000);
+  const pools = listPools()
+    .filter((pool) => pool.members > 0)
+    .map((pool) => ({
+      id: pool.name,
+      object: "model" as const,
+      created,
+      owned_by: "gateway",
+      gateway: { kind: "pool", members: pool.members, strategy: pool.strategy },
+    }));
 
-  const upstream = await listModels(loadConfig());
-  const body = await upstream.text();
-  if (upstream.ok) cache = { at: Date.now(), body };
+  const listings = queryListings({ kind: "text" }, 1000).map((listing) => ({
+    id: listing.platform === "ckey" ? listing.external_id : listing.id,
+    object: "model" as const,
+    created,
+    owned_by: listing.platform,
+    gateway: { kind: "listing", seller: listing.seller, price_in: listing.price_in },
+  }));
 
-  return new Response(body, {
-    status: upstream.status,
-    headers: { "Content-Type": "application/json", "X-Gateway-Cache": "miss" },
+  return new Response(JSON.stringify({ object: "list", data: [...pools, ...listings] }), {
+    headers: { "Content-Type": "application/json" },
   });
 }

@@ -5,13 +5,25 @@ Công cụ của bạn trỏ vào gateway; key thật của hai sàn không bao 
 
 Kế hoạch: `plans/web-gom-api-vilao-ckey.md` · Khảo sát API: `docs/api-notes.md` · Mốc hiện tại: `plans/m1-duong-ong.md`
 
-## Trạng thái — M1 xong
+## Trạng thái — M1, M2, M3 xong
 
-Có: `/v1/chat/completions` (stream + sync), `/v1/models`, key riêng, log tiền từng request, dashboard.
-**Chưa có:** pool, filter, định tuyến, fallback, Vilao. Một upstream CKey gọi cứng.
+| | |
+|---|---|
+| `/v1/chat/completions` | stream + sync, giải tên pool, log tiền từng request |
+| `/v1/messages` | giao thức Anthropic, cho Claude Code — **chỉ chạy listing CKey** |
+| `/v1/models` | pool đứng trước, rồi tới listing thô |
+| `/catalog` | 1.096 listing từ hai sàn, lọc đầy đủ |
+| `/pools` | tạo pool, thêm/bớt/đổi thứ tự thành viên |
 
-M1 **chưa có fallback** — listing hỏng là request hỏng. Vì thế `GATEWAY_DEFAULT_MODEL`
-nên là listing đã kiểm chứng, đừng chọn rẻ nhất chưa rõ.
+**Chưa có (M4 trở đi):** fallback tự động, chiến lược round-robin/trọng số,
+giữ chunk đầu, trần chi tiêu, pool theo luật, học chất lượng.
+
+Hai giới hạn đang có, cố ý và đã hiện rõ trên UI:
+
+- **Pool mới chỉ gọi thành viên #1.** Thành viên đó hỏng là request hỏng — fallback là M4
+- **Chi tiêu Vilao chưa tính được.** Vilao không trả cost trong response
+  (`usage.cost` luôn 0); số thật nằm ở API quản lý. Dashboard vì thế ghi
+  "Chi hôm nay (thiếu)" kèm số request chưa rõ giá, thay vì đưa ra tổng sai. M5 đối soát.
 
 ## Chạy
 
@@ -20,6 +32,7 @@ npm install
 cp .env.example .env.local     # điền CKEY_API_KEY
 npm run db:init
 npm run key:create cursor      # key chỉ hiện MỘT LẦN
+npm run sync                   # kéo catalog hai sàn về
 npm run build && npm run start
 ```
 
@@ -30,7 +43,16 @@ Trỏ công cụ vào:
 | Base URL | `http://localhost:3000/v1` |
 | API key | key `gw-...` vừa tạo |
 
-Dashboard ở `http://localhost:3000`.
+Dashboard ở `http://localhost:3000`. Tạo pool ở `/pools`, thêm thành viên từ `/catalog`.
+
+Bỏ trống `VILAO_API_KEY` và `VILAO_PAT` thì gateway chạy thuần CKey, không lỗi.
+
+### Trỏ Claude Code vào
+
+```bash
+export ANTHROPIC_BASE_URL=http://localhost:3000   # root, KHÔNG có /v1
+export ANTHROPIC_API_KEY=gw-...
+```
 
 ## Vận hành
 
@@ -49,6 +71,8 @@ trần nếu muốn tách gateway khỏi UI. Đừng để logic định tuyến
 ```
 src/app/v1/…      route handler (nơi duy nhất chạm Next.js)
 src/app/page.tsx  dashboard
-src/lib/gateway/  auth · config · errors · stream · modelname · runlog · upstream/ckey
+src/lib/gateway/  auth · config · errors · stream · modelname · runlog
+                  catalog · filter · pool · resolve · dispatch
+                  upstream/ckey · upstream/vilao
 src/lib/db/       schema + kết nối
 ```

@@ -1,4 +1,5 @@
 import { isModelMismatch } from "@/lib/gateway/modelname";
+import { Nav } from "./ui";
 import { recentRuns, spendToday } from "@/lib/gateway/runlog";
 
 export const dynamic = "force-dynamic";
@@ -12,16 +13,24 @@ export default function Dashboard() {
 
   return (
     <main style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <h1 style={{ fontSize: "1.1rem", marginBottom: "1.5rem" }}>LLM Gateway</h1>
+      <Nav here="/" />
 
       <section style={{ display: "flex", gap: "2.5rem", marginBottom: "2rem" }}>
-        <Stat label="Chi hôm nay" value={`${vnd(today.total)} ₫`} />
+        <Stat
+          label={today.unpriced > 0 ? "Chi hôm nay (thiếu)" : "Chi hôm nay"}
+          value={`${vnd(today.total)} ₫`}
+        />
         <Stat label="Request" value={String(today.calls)} />
         <Stat
           label="Hỏng"
           value={String(today.failures)}
           tone={today.failures > 0 ? "#ff6b6b" : undefined}
         />
+        {/* Never let the total look complete when it is not: Vilao does not
+            report cost inline, so those calls are counted but not priced. */}
+        {today.unpriced > 0 && (
+          <Stat label="Chưa rõ giá" value={String(today.unpriced)} tone="#f0a202" />
+        )}
       </section>
 
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>

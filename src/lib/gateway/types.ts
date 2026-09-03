@@ -4,6 +4,8 @@ export type Platform = "ckey" | "vilao";
 export interface CallOutcome {
   platform: Platform;
   listingId: string;
+  /** Pool that routed this call, or null when the model was passed straight through. */
+  poolId?: string | null;
   requestedModel: string;
   actualModel?: string;
   stream: boolean;

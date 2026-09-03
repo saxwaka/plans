@@ -14,11 +14,12 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
          requested_model, actual_model, stream, tokens_in, tokens_out, cost_vnd,
          ttfb_ms, latency_ms, status, error_code, http_status,
          upstream_request_id, created_at
-       ) VALUES (?, ?, NULL, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       ) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       randomUUID(),
       clientKeyId,
+      outcome.poolId ?? null,
       outcome.listingId,
       outcome.platform,
       outcome.requestedModel,
@@ -62,16 +63,33 @@ export function recentRuns(limit = 50): RunRow[] {
     .all(limit);
 }
 
-export function spendToday(): { total: number; calls: number; failures: number } {
+export function spendToday(): {
+  total: number;
+  calls: number;
+  failures: number;
+  /**
+   * Successful calls whose cost is still unknown. CKey reports cost inline, but
+   * Vilao's usage.cost is always 0 and its real figure only shows up in the
+   * management API, so a bare total would silently omit every Vilao call.
+   * M5 reconciles these; until then the number is shown rather than hidden.
+   */
+  unpriced: number;
+} {
   const since = new Date();
   since.setHours(0, 0, 0, 0);
   const row = getDb()
-    .prepare<[string], { total: number | null; calls: number; failures: number }>(
+    .prepare<[string], { total: number | null; calls: number; failures: number; unpriced: number }>(
       `SELECT COALESCE(SUM(cost_vnd), 0) AS total,
               COUNT(*) AS calls,
-              SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS failures
+              SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS failures,
+              SUM(CASE WHEN status = 'ok' AND cost_vnd IS NULL THEN 1 ELSE 0 END) AS unpriced
          FROM run WHERE created_at >= ?`,
     )
     .get(since.toISOString())!;
-  return { total: row.total ?? 0, calls: row.calls, failures: row.failures ?? 0 };
+  return {
+    total: row.total ?? 0,
+    calls: row.calls,
+    failures: row.failures ?? 0,
+    unpriced: row.unpriced ?? 0,
+  };
 }

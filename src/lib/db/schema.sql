@@ -42,3 +42,60 @@ CREATE TABLE IF NOT EXISTS run (
 
 CREATE INDEX IF NOT EXISTS idx_run_created ON run(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_run_listing ON run(listing_id);
+
+-- ── M2: catalog ────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS listing (
+  id            TEXT PRIMARY KEY,    -- "<platform>:<external_id>"
+  platform      TEXT NOT NULL,
+  external_id   TEXT NOT NULL,       -- id gửi lên sàn khi gọi
+  provider_id   TEXT,                -- Vilao: cần cho subscribe
+  seller        TEXT,
+  display_name  TEXT NOT NULL,
+  base_model    TEXT NOT NULL,       -- tên đã chuẩn hoá, khoá để gom nhóm
+  kind          TEXT NOT NULL DEFAULT 'text',
+  pricing_mode  TEXT,                -- 'token' | 'request'
+  price_in      REAL,                -- VND / 1M token
+  price_out     REAL,
+  price_request REAL,
+  price_floor   REAL,                -- min charge mỗi request
+  context_len   INTEGER,
+  supports_tools  INTEGER,
+  supports_vision INTEGER,
+  success_rate  REAL,                -- Vilao công bố; CKey luôn NULL
+  total_requests INTEGER,
+  avg_latency_ms REAL,
+  verified      INTEGER,
+  raw_json      TEXT NOT NULL,
+  synced_at     TEXT NOT NULL,
+  stale         INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_listing_base ON listing(base_model);
+CREATE INDEX IF NOT EXISTS idx_listing_platform ON listing(platform, stale);
+
+CREATE TABLE IF NOT EXISTS saved_filter (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, filter_json TEXT NOT NULL, created_at TEXT NOT NULL
+);
+
+-- ── M3: pool ───────────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS pool (
+  id         TEXT PRIMARY KEY,
+  name       TEXT NOT NULL UNIQUE,   -- tên model client gọi
+  strategy   TEXT NOT NULL DEFAULT 'failover',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pool_member (
+  pool_id    TEXT NOT NULL,
+  listing_id TEXT NOT NULL,
+  position   INTEGER NOT NULL,
+  weight     REAL NOT NULL DEFAULT 1,
+  state      TEXT NOT NULL DEFAULT 'active',   -- active | candidate | blocked
+  PRIMARY KEY (pool_id, listing_id)
+);
+
+-- Vilao từ chối model chưa subscribe vào key, nên phải nhớ đã subscribe cái nào.
+CREATE TABLE IF NOT EXISTS subscription (
+  listing_id      TEXT PRIMARY KEY,
+  upstream_sub_id TEXT,
+  subscribed_at   TEXT NOT NULL
+);
