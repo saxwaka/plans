@@ -462,7 +462,7 @@ paths:
       requestBody: { required: true, content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string }, role: { type: string, enum: [client, admin], default: client } } },
                      example: { name: my-agent-app } } } }
       responses:
-        "201": { content: { application/json: { example: { id: "…", key: "gw-0e4…", role: client } } } }
+        "201": { content: { application/json: { example: { id: "…", key: "gw-<48 hex chars, shown once>", role: client } } } }
   /api/keys/{id}:
     servers: [ { url: http://localhost:3000 } ]
     parameters: [ { in: path, name: id, required: true, schema: { type: string } } ]
