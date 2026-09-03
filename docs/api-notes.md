@@ -137,75 +137,93 @@ curl -sS https://ckey.vn/v1/models -o docs/samples/ckey-models.json
 
 ---
 
-## Vilao — key hợp lệ, nhưng tài khoản hết tiền
+## Vilao — cần "subscribe" từng model vào key
 
-Đã thử với key thật (2026-09-03).
+Đã thử với key thật, sau khi tài khoản có số dư (2026-09-03).
 
-### Key có thật
+### Key hợp lệ
 
-Phép thử đối chứng: gọi `/v1/models` bằng một key bịa ra trả về `401 INVALID_API_KEY`; bằng key thật trả về `200`. Vậy key được server nhận.
+Phép thử đối chứng: `/v1/models` với key bịa ra trả `401 INVALID_API_KEY`; với key thật trả `200`.
 
 ### Bẫy xác thực — hai endpoint không giống nhau
 
-Đây là thứ tốn nhiều giờ nếu không biết trước:
+Thứ này tốn nhiều giờ nếu không biết trước:
 
 | Endpoint | `Authorization: Bearer` | `x-api-key` |
 |---|---|---|
 | `/v1/models` | 200 | 200 |
-| `/v1/chat/completions` | **401 `INVALID_API_KEY`** | 402 `INSUFFICIENT_BALANCE` |
+| `/v1/chat/completions` | **401 `INVALID_API_KEY`** | đi tiếp bình thường |
 
-Cùng một key, cùng lúc. Endpoint chat **từ chối `Bearer`** và báo sai lý do — nói key hỏng trong khi thật ra nó chỉ không đọc header đó. Trớ trêu là chính thông báo lỗi của `/v1/models` lại quảng cáo cả hai dạng đều được.
+Cùng một key, cùng lúc. Endpoint chat **từ chối `Bearer`** và **báo sai lý do** — nói key hỏng trong khi thật ra nó không đọc header đó. Trớ trêu là chính thông báo lỗi của `/v1/models` lại quảng cáo cả hai dạng đều được.
 
-**Kết luận: dùng `x-api-key` cho Vilao, đừng dùng `Bearer`.**
+**Kết luận: Vilao luôn dùng `x-api-key`.**
 
-### Tài khoản chưa nạp tiền
+### Model phải được gắn vào key trước khi gọi
+
+Sau khi nạp tiền, lỗi chuyển từ `INSUFFICIENT_BALANCE` sang:
 
 ```json
-{"error":{"code":"INSUFFICIENT_BALANCE",
-  "message":"Insufficient balance to complete the request.",
-  "type":"insufficient_quota"}}
+{"error":{"code":"FORBIDDEN",
+  "message":"Please subscribe to model in the API Key: claude-sonnet-5",
+  "type":"permission_error"}}
 ```
 
-Đây gần như chắc chắn cũng là lý do `/v1/models` trả `{"data":null,"object":"list"}` — chưa có tiền thì chưa có model nào gắn vào key. Trang chủ Vilao nói người dùng *chọn model trên Marketplace*, nên danh sách model là **theo từng key**, không phải catalog chung như CKey.
+Giống hệt nhau với `auto`, `gpt-4o-mini`, `claude-sonnet-5`, `gemini-2.5-flash`.
 
-Chưa trả lời được, phải nạp tiền rồi chọn model mới biết: schema object model ra sao, có kèm giá không, đơn vị VND hay USD, có phải marketplace nhiều người bán không, có model ảnh/video không.
+Đây là mô hình khác hẳn CKey. Vilao **không** bán catalog chung — bạn phải vào Marketplace **đăng ký từng model vào từng API key**. Vì thế `/v1/models` vẫn trả `{"data":null}` dù đã có tiền: endpoint đó liệt kê **model đã đăng ký của key này**, không phải catalog.
+
+Hệ quả cho app: `/v1/models` của Vilao là *quyền của key*, không phải danh mục để duyệt. Muốn có catalog Vilao để so giá thì phải scrape web — API không cung cấp.
 
 ### Bề mặt API rất hẹp
 
-Chỉ có hai route. Tất cả những cái sau đều `404 {"error":"not found","path":...}`:
+Chỉ hai route. Tất cả những cái sau đều `404 {"error":"not found","path":...}`:
 
 ```
 /v1/me  /v1/user  /v1/account  /v1/balance  /v1/credits
 /v1/usage  /v1/key  /v1/marketplace  /v1/catalog  /v1/models/list
 ```
 
-Không có endpoint xem số dư. Muốn hiện số dư trong app thì phải scrape web, hoặc bỏ tính năng đó.
+Không có endpoint xem số dư.
+
+### Còn chờ
+
+Đăng ký vài model vào key trên Marketplace → gọi lại để lấy schema `/v1/models` thật, biết đơn vị giá, và xem có model ảnh/video không.
 
 ---
 
-## CKey — key chưa dùng được từ đây
+## CKey — key không hợp lệ (đã loại trừ nguyên nhân mạng)
 
-Key bạn gửi bị `ckey.vn/v1/chat/completions` từ chối, thử cả hai dạng có và không có tiền tố `sk-`:
+Egress tới `api.xah.io` đã mở. Test trên **cả hai host**, cả hai dạng key:
+
+| Host | Key thô | `sk-` + key |
+|---|---|---|
+| `ckey.vn/v1` | 401 invalid | 401 invalid |
+| `api.xah.io/v1` | 401 invalid | 401 invalid |
 
 ```json
 {"error":{"message":"The API key is invalid.",
-  "request_id":"req_bd1988402061eef07b47b350",
+  "request_id":"req_fd5b0187f920230924cd5443",
   "type":"authentication_error"}}
 ```
 
-Hai khả năng, chưa phân biệt được:
+Trước đây chưa phân biệt được "key sai" với "gọi nhầm host". **Giờ đã rõ: không phải host.** Host chính thức cũng từ chối, nên key sai, hết hạn, hoặc copy thiếu.
 
-1. Key chỉ hợp lệ với **base URL chính thức `api.xah.io`**, còn `ckey.vn/v1` là mirror chỉ phục vụ `/v1/models` công khai. `api.xah.io` **vẫn bị chặn egress** (403 ở CONNECT), nên không kiểm chứng được từ đây.
-2. Key sai hoặc đã hết hạn.
+Bằng chứng phụ cho thấy key *có* được đọc: đổi tên header làm thông báo lỗi đổi theo.
 
-Cách phân biệt: chạy trên máy bạn
-```bash
-curl https://api.xah.io/v1/chat/completions   -H "Authorization: Bearer sk-YOUR_KEY" -H 'Content-Type: application/json'   -d '{"model":"dungcsnd113/claude-opus-5","max_tokens":16,
-       "messages":[{"role":"user","content":"Say OK"}]}'
-```
-Nếu chạy được thì là khả năng 1, và app phải trỏ vào `api.xah.io`.
+| Header | Thông báo |
+|---|---|
+| `Authorization: Bearer <k>` | "The API key is invalid." |
+| `x-api-key: <k>` | "The API key is invalid." |
+| `api-key: <k>` | "A valid API key is required." |
+| `Authorization: <k>` (thiếu Bearer) | "A valid API key is required." |
 
-Lưu ý: `ckey.vn/v1/models` trả 497–498 model **bất kể có key hay không, key đúng hay sai** — endpoint này không kiểm tra xác thực. Đừng dùng nó để test key.
+"Invalid" nghĩa là đã tìm thấy key và tra cứu rồi loại; "required" nghĩa là không tìm thấy key ở đâu cả. Vậy `Bearer` và `x-api-key` đều là header đúng, và chuỗi key mới là thứ sai.
+
+**Cần: copy lại key từ dashboard CKey.** Key mẫu trong docs của họ có dạng `sk-...`; chuỗi đã thử là 48 ký tự hex không tiền tố.
+
+### Hai host, cùng một backend
+
+`ckey.vn/v1` và `api.xah.io/v1` trả **đúng cùng 498 model, danh sách trùng khít**. Dùng host nào cũng được; để `api.xah.io` làm mặc định vì đó là base URL chính thức, và cho đổi ở Settings.
 
 ### Envelope lỗi hai bên khác nhau
 
@@ -214,25 +232,25 @@ CKey  : {"error":{"message", "request_id", "type"}}
 Vilao : {"error":{"code",    "message",    "type"}}
 ```
 
-CKey có `request_id` (hữu ích khi báo lỗi cho người bán), Vilao có `code` máy đọc được. `pricing.ts`/`provider.ts` cần hàm chuẩn hoá lỗi đọc được cả hai.
+CKey có `request_id` (hữu ích khi khiếu nại người bán), Vilao có `code` máy đọc được. Cần hàm chuẩn hoá lỗi đọc được cả hai.
 
 ### Catalog thay đổi liên tục
 
 Đo thật, hai snapshot cách nhau khoảng một giờ: vẫn 498 model, nhưng `tdsang1999/gemini-3.7-flash` biến mất và `tdsang1999/gemini-3.7-flash-high` xuất hiện.
 
-Người bán đổi listing trong vòng vài giờ. Vì vậy khi sync **không được xoá cứng** listing cũ — đánh dấu `stale` để lịch sử `run` và số liệu tin cậy không bị mồ côi.
+Người bán đổi listing trong vòng vài giờ. Khi sync **không xoá cứng** listing cũ — đánh dấu `stale` để lịch sử `run` và số liệu tin cậy không mồ côi.
 
 ---
 
 ## Việc còn lại của M0
 
-1. **Nạp tiền Vilao**, chọn vài model trên Marketplace → chạy lại `/v1/models` để lấy schema thật
-2. **Kiểm chứng key CKey** với `api.xah.io` bằng lệnh curl ở trên (chạy trên máy bạn)
-3. Xin mở egress cho `api.xah.io`
-4. Chốt bội số giá CKey bằng một request thật + đối chiếu số dư — **vẫn chưa làm được**, cả hai key đều chưa gọi thành công
-5. Thử một model Veo xem gọi bằng endpoint nào, trả về link hay base64
-6. Xem `ckey.vn/leaderboard` có phải xếp hạng độ tin cậy người bán không
+Cả hai đều là thao tác trên dashboard, không phải việc code:
+
+1. **CKey** — copy lại API key cho đúng
+2. **Vilao** — vào Marketplace đăng ký vài model vào key
+
+Sau đó mới chốt được: bội số giá (VND trên 1 triệu token hay khác — xác nhận bằng một request thật rồi đối chiếu số dư), schema model của Vilao, và cách gọi model video Veo.
 
 ## Bảo mật
 
-Hai key được dán thẳng vào khung chat, nên chúng nằm trong transcript của session này. Mình **không** ghi chúng xuống đĩa và **không** commit (đã kiểm tra bằng grep toàn repo). Dù vậy nên **thu hồi và tạo key mới** sau khi khảo sát xong; từ giờ truyền key qua biến môi trường thay vì dán vào chat.
+Hai key được dán thẳng vào khung chat nên nằm trong transcript session này. Mình **không** ghi chúng xuống đĩa và **không** commit (đã grep toàn repo). Vẫn nên **thu hồi và tạo key mới** sau khi xong; từ giờ truyền qua biến môi trường thay vì dán vào chat.
