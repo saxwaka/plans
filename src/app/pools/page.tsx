@@ -1,24 +1,23 @@
 import {
   actionCreatePool,
   actionDeletePool,
-  actionMoveMember,
-  actionRemoveMember,
   actionMemberState,
-  actionSetRule,
+  actionMoveMember,
   actionSetPosition,
+  actionSetRule,
   actionSetWeight,
   actionToggleMember,
   actionUpdatePool,
   actionVerifyPool,
   syncCatalog,
 } from "../actions";
+import { Badge, Shell, secs, vnd } from "../ui";
 import { poolSpend } from "@/lib/gateway/budget";
+import { countAll } from "@/lib/gateway/filter";
+import { candidates, chainMembers, getRule, listPools, type PoolMember } from "@/lib/gateway/pool";
 import { estimatedCost, reliability } from "@/lib/gateway/routing";
-import { btn, c, input, Nav, Td, Th, vnd } from "../ui";
-import { candidates, chainMembers, getRule, listPools } from "@/lib/gateway/pool";
 import { measuredStats } from "@/lib/gateway/stats";
 import { lastProbes, verifyEstimate } from "@/lib/gateway/verify";
-import { countAll } from "@/lib/gateway/filter";
 
 export const dynamic = "force-dynamic";
 
@@ -28,301 +27,298 @@ export default function Pools() {
   const stats = measuredStats();
 
   return (
-    <main style={{ maxWidth: 1200, margin: "0 auto" }}>
-      <Nav here="/pools" />
-
-      <form action={actionCreatePool} style={{ display: "flex", gap: "0.5rem", marginBottom: "1.5rem" }}>
-        <input style={{ ...input, width: 200 }} name="name" placeholder="tên pool, vd: opus" required />
-        <select style={btn} name="strategy" defaultValue="failover">
-          <option value="failover">failover</option>
-        </select>
-        <button style={btn} type="submit">tạo pool</button>
-        <form action={syncCatalog}>
-          <button style={btn} type="submit">sync catalog ({catalogSize})</button>
+    <Shell here="/pools">
+      <div className="card toolbar" style={{ marginBottom: 16 }}>
+        <form action={actionCreatePool} className="toolbar">
+          <input name="name" placeholder="tên pool, vd: opus" required style={{ width: 200 }} />
+          <select name="strategy" defaultValue="failover">
+            <option value="failover">failover</option>
+            <option value="cheapest">cheapest</option>
+          </select>
+          <button className="btn primary" type="submit">Tạo pool</button>
         </form>
-      </form>
+        <form action={syncCatalog}>
+          <button className="btn" type="submit">
+            Đồng bộ danh mục ({catalogSize.toLocaleString("vi-VN")})
+          </button>
+        </form>
+      </div>
 
-      <p style={{ fontSize: "0.75rem", color: c.dim, marginBottom: "1.5rem", lineHeight: 1.6 }}>
-        Tên pool chính là tên model client gọi. Thành viên chạy theo thứ tự từ trên xuống —
-        đặt listing rẻ lên đầu và listing đắt-nhưng-chắc xuống cuối làm lưới an toàn.
-        <br />
-        Hỏng ở thành viên #1 thì tự tụt xuống #2 — nhưng chỉ khi lỗi <em>đáng thử lại</em>
-        và chỉ <em>trước</em> khi byte đầu tiên rời server. Lỗi 400 do prompt sai không thử lại,
-        vì sàn nào cũng hỏng như nhau, thử lại chỉ tốn tiền.
+      <p className="note" style={{ marginBottom: 26 }}>
+        Tên pool chính là tên model client gọi. Thành viên chạy theo thứ tự từ trên xuống — đặt
+        listing rẻ lên đầu, listing <em>đắt nhưng chắc</em> xuống cuối làm lưới an toàn. Hỏng ở
+        thành viên đầu thì tự tụt xuống dưới, nhưng chỉ khi lỗi <em>đáng thử lại</em> và chỉ{" "}
+        <em>trước</em> khi byte đầu tiên rời server.
       </p>
 
       {pools.length === 0 && (
-        <p style={{ color: c.dim, fontSize: "0.8rem" }}>
-          Chưa có pool nào. Tạo một cái, rồi sang <a href="/catalog" style={{ color: c.accent }}>catalog</a> thêm thành viên.
-        </p>
+        <div className="card">
+          <p className="note" style={{ margin: 0 }}>
+            Chưa có pool nào. Tạo một cái ở trên, rồi sang <a href="/catalog">danh mục</a> thêm
+            thành viên.
+          </p>
+        </div>
       )}
 
       {pools.map((pool) => {
         // The chain includes disabled members: hiding a listing you switched off
         // would leave no way to switch it back on.
         const members = chainMembers(pool.id);
-        const activeCount = members.filter((m) => m.state === "active").length;
-        const p = pool as typeof pool & {
-          max_attempts?: number;
-          daily_budget?: number | null;
-          monthly_budget?: number | null;
-          max_price_per_request?: number | null;
-        };
+        const active = members.filter((m) => m.state === "active").length;
         const spend = poolSpend(pool.id);
         const rule = getRule(pool.id);
         const queue = candidates(pool.id);
         const probes = lastProbes(pool.id);
         const estimate = verifyEstimate(pool.id, true);
+        const settings = pool as typeof pool & {
+          max_attempts?: number;
+          daily_budget?: number | null;
+          monthly_budget?: number | null;
+          max_price_per_request?: number | null;
+        };
+
         return (
-          <section key={pool.id} style={{ marginBottom: "2.5rem" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginBottom: "0.6rem" }}>
-              <h2 style={{ fontSize: "0.95rem", margin: 0 }}>{pool.name}</h2>
-              <span style={{ color: c.dim, fontSize: "0.72rem" }}>
-                {pool.strategy} · {activeCount} bật
-                {members.length > activeCount && ` · ${members.length - activeCount} tắt`}
-              </span>
-              <form action={actionVerifyPool} style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+          <section className="pool" key={pool.id}>
+            <div className="poolhead">
+              <span className="name">{pool.name}</span>
+              <Badge tone="accent">{pool.strategy}</Badge>
+              <Badge tone="ok">{active} bật</Badge>
+              {members.length > active && <Badge tone="neutral">{members.length - active} tắt</Badge>}
+              <span style={{ flex: 1 }} />
+              <form action={actionVerifyPool} className="toolbar">
                 <input type="hidden" name="poolId" value={pool.id} />
                 <input type="hidden" name="includeCandidates" value="1" />
-                <button style={btn} type="submit" disabled={estimate.members === 0}>
-                  kiểm tra pool
+                <button className="btn" type="submit" disabled={estimate.members === 0}>
+                  Kiểm tra {estimate.members} listing
                 </button>
                 {/* Quote the price first. A one-token probe is not a cheap probe:
                     billing is max(floor, per-request + tokens), so a sweep costs
-                    the sum of the members' floors, not a rounding error. It is an
-                    upper bound — a listing that fails is not billed, and a measured
-                    sweep of 18 came to 207₫ against a 338₫ quote. */}
-                <span
-                  style={{ fontSize: "0.7rem", color: c.warn }}
-                  title="Gọi thật, tốn tiền thật. Listing hỏng thì không bị tính, nên số thực trả thường thấp hơn."
-                >
-                  {estimate.members} listing · tối đa {vnd(estimate.cost)}₫
-                </span>
+                    the sum of the floors. It is an upper bound — a listing that
+                    fails is not billed. */}
+                <Badge tone="warn" title="Gọi thật, tốn tiền thật. Listing hỏng thì không bị tính, nên số thực trả thường thấp hơn.">
+                  tối đa {vnd(estimate.cost)} ₫
+                </Badge>
               </form>
               <form action={actionDeletePool}>
                 <input type="hidden" name="poolId" value={pool.id} />
-                <button style={{ ...btn, color: c.bad }} type="submit">xoá pool</button>
+                <button className="btn danger" type="submit">Xoá</button>
               </form>
             </div>
 
-            <form
-              action={actionUpdatePool}
-              style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", alignItems: "center", marginBottom: "0.8rem" }}
-            >
+            <form action={actionUpdatePool} className="card toolbar" style={{ marginBottom: 12 }}>
               <input type="hidden" name="poolId" value={pool.id} />
-              <select style={btn} name="strategy" defaultValue={pool.strategy}>
-                <option value="failover">failover (thứ tự bạn đặt)</option>
-                <option value="cheapest">cheapest (rẻ nhất đã kiểm chứng)</option>
-                <option value="round-robin">round-robin</option>
-                <option value="weighted">weighted</option>
-                <option value="pinned">pinned</option>
+              <select name="strategy" defaultValue={pool.strategy}>
+                <option value="failover">failover — thứ tự bạn đặt</option>
+                <option value="cheapest">cheapest — rẻ nhất đã kiểm chứng</option>
+                <option value="round-robin">round-robin — chia đều lượt</option>
+                <option value="weighted">weighted — theo trọng số</option>
+                <option value="pinned">pinned — ghim thành viên đầu</option>
               </select>
-              <label style={{ fontSize: "0.7rem", color: c.dim }}>
-                thử tối đa{" "}
-                <input style={{ ...input, width: 44 }} name="maxAttempts" defaultValue={p.max_attempts ?? 3} />
+              <label className="check" style={{ gap: 5 }}>
+                <span className="faint">thử tối đa</span>
+                <input name="maxAttempts" defaultValue={settings.max_attempts ?? 3} style={{ width: 46 }} />
               </label>
-              <input style={{ ...input, width: 110 }} name="dailyBudget" placeholder="trần ngày ₫" defaultValue={p.daily_budget ?? ""} />
-              <input style={{ ...input, width: 118 }} name="monthlyBudget" placeholder="trần tháng ₫" defaultValue={p.monthly_budget ?? ""} />
-              <input style={{ ...input, width: 128 }} name="maxPricePerRequest" placeholder="≤ ₫/request" defaultValue={p.max_price_per_request ?? ""} />
-              <button style={btn} type="submit">lưu</button>
-              <span style={{ fontSize: "0.7rem", color: c.dim }}>
-                hôm nay {vnd(spend.today)}₫
-                {spend.wastedToday > 0 && (
-                  <span style={{ color: c.warn }}> · lãng phí {vnd(spend.wastedToday)}₫</span>
-                )}
-                {/* A budget can only stop spending it can see. Vilao reports no cost
-                    inline, so a Vilao-heavy pool would sail past its cap in silence —
-                    say so rather than implying the cap is enforced. */}
-                {spend.unpricedToday > 0 && (p.daily_budget || p.monthly_budget) && (
-                  <span style={{ color: c.bad }}>
-                    {" "}· trần KHÔNG tính được {spend.unpricedToday} request Vilao
-                  </span>
-                )}
+              <label className="check" style={{ gap: 5 }}>
+                <span className="faint">trần ngày</span>
+                <input name="dailyBudget" defaultValue={settings.daily_budget ?? ""} style={{ width: 84 }} />
+                <span className="faint">₫</span>
+              </label>
+              <label className="check" style={{ gap: 5 }}>
+                <span className="faint">trần tháng</span>
+                <input name="monthlyBudget" defaultValue={settings.monthly_budget ?? ""} style={{ width: 84 }} />
+                <span className="faint">₫</span>
+              </label>
+              <label className="check" style={{ gap: 5 }}>
+                <span className="faint">≤ mỗi request</span>
+                <input
+                  name="maxPricePerRequest"
+                  defaultValue={settings.max_price_per_request ?? ""}
+                  style={{ width: 72 }}
+                />
+                <span className="faint">₫</span>
+              </label>
+              <button className="btn" type="submit">Lưu</button>
+              <span style={{ flex: 1 }} />
+              <span className="faint" style={{ fontSize: 12 }}>
+                hôm nay {vnd(spend.today)} ₫
               </span>
+              {spend.wastedToday > 0 && <Badge tone="warn">lãng phí {vnd(spend.wastedToday)} ₫</Badge>}
+              {/* A budget can only stop spending it can see. Vilao reports no cost
+                  inline, so a Vilao-heavy pool would sail past its cap in silence. */}
+              {spend.unpricedToday > 0 && (settings.daily_budget || settings.monthly_budget) && (
+                <Badge tone="bad">trần chưa tính {spend.unpricedToday} request Vilao</Badge>
+              )}
             </form>
 
             {members.length === 0 ? (
-              <p style={{ color: c.warn, fontSize: "0.75rem" }}>
-                Pool rỗng — gọi tên này sẽ trả 409. Thêm thành viên từ catalog.
-              </p>
+              <div className="card">
+                <span className="note">Pool rỗng — gọi tên này sẽ trả 409. Thêm thành viên từ danh mục.</span>
+              </div>
             ) : (
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.76rem" }}>
-                <thead>
-                  <tr style={{ textAlign: "left", color: c.dim }}>
-                    <Th>Vị trí</Th><Th>Bật</Th><Th>Sàn</Th><Th>Người bán</Th><Th>Model</Th>
-                    <Th>In</Th><Th>Out</Th><Th>/req</Th><Th>Success</Th><Th>Request</Th>
-                    <Th>Ước tính</Th><Th>Điểm</Th><Th>Kiểm tra</Th><Th>W</Th><Th />
-                  </tr>
-                </thead>
-                <tbody>
-                  {members.map((m, i) => (
-                    <tr
-                      key={m.id}
-                      style={{
-                        borderTop: `1px solid ${c.line}`,
-                        // A disabled row stays readable but visibly out of play.
-                        opacity: m.state === "active" ? 1 : 0.4,
-                      }}
-                    >
-                      <Td>
-                        {/* Typing a number beats clicking the arrow eight times
-                            once a pool has more than a handful of members. */}
-                        <form action={actionSetPosition}>
-                          <input type="hidden" name="poolId" value={pool.id} />
-                          <input type="hidden" name="listingId" value={m.id} />
-                          <input
-                            style={{
-                              ...input,
-                              width: 34,
-                              textAlign: "center",
-                              color: i === 0 && m.state === "active" ? c.ok : undefined,
-                            }}
-                            name="position"
-                            defaultValue={i + 1}
-                            title="gõ số rồi Enter để nhảy tới vị trí đó"
-                          />
-                        </form>
-                      </Td>
-                      <Td>
-                        {/* Off keeps the member and its place; × removes it. */}
-                        <form action={actionToggleMember}>
-                          <input type="hidden" name="poolId" value={pool.id} />
-                          <input type="hidden" name="listingId" value={m.id} />
-                          <input type="hidden" name="enabled" value={m.state === "active" ? "0" : "1"} />
-                          <button
-                            style={{ ...btn, color: m.state === "active" ? c.ok : c.dim, minWidth: 34 }}
-                            type="submit"
-                            title={m.state === "active" ? "tắt — giữ nguyên vị trí" : "bật lại"}
-                          >
-                            {m.state === "active" ? "on" : "off"}
-                          </button>
-                        </form>
-                      </Td>
-                      <Td>{m.platform}</Td>
-                      <Td>{m.seller ?? "—"}</Td>
-                      <Td>
-                        {m.display_name}
-                        {m.stale === 1 && <span style={{ color: c.warn }}> (stale)</span>}
-                      </Td>
-                      <Td>{vnd(m.price_in)}</Td>
-                      <Td>{vnd(m.price_out)}</Td>
-                      <Td>{vnd(m.price_request)}</Td>
-                      <Td>
-                        {m.success_rate !== null ? (
-                          `${m.success_rate.toFixed(1)}%`
-                        ) : stats.get(m.id) ? (
-                          // CKey publishes nothing, so anything shown here the
-                          // gateway measured for itself.
-                          <span style={{ color: c.accent }} title="gateway tự đo">
-                            ~{(
-                              (1 - (stats.get(m.id)!.failures / stats.get(m.id)!.calls)) * 100
-                            ).toFixed(0)}
-                            % ({stats.get(m.id)!.calls})
-                          </span>
-                        ) : (
-                          <span style={{ color: c.dim }}>chưa đo</span>
-                        )}
-                      </Td>
-                      <Td>{m.total_requests?.toLocaleString("vi-VN") ?? "—"}</Td>
-                      {/* Estimated cost of one typical call, and that cost divided by
-                          reliability — the number the router actually compares. */}
-                      <Td>{vnd(estimatedCost(m))}₫</Td>
-                      <Td>
-                        <span style={{ color: c.dim }} title="giá ước tính chia cho độ tin cậy">
-                          {(estimatedCost(m) / reliability(m, stats.get(m.id))).toFixed(1)}
-                        </span>
-                      </Td>
-                      <Td>{probeCell(probes.get(m.id))}</Td>
-                      <Td>
-                        <form action={actionSetWeight} style={{ display: "flex", gap: 2 }}>
-                          <input type="hidden" name="poolId" value={pool.id} />
-                          <input type="hidden" name="listingId" value={m.id} />
-                          <input style={{ ...input, width: 40 }} name="weight" defaultValue={m.weight} />
-                        </form>
-                      </Td>
-                      <Td>
-                        <span style={{ display: "flex", gap: 4 }}>
-                          <Move poolId={pool.id} listingId={m.id} direction={-1} label="↑" />
-                          <Move poolId={pool.id} listingId={m.id} direction={1} label="↓" />
-                          <form action={actionRemoveMember}>
+              <div className="tablewrap scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th className="num">Vị trí</th>
+                      <th>Bật</th>
+                      <th>Sàn</th>
+                      <th>Người bán</th>
+                      <th>Model</th>
+                      <th className="num">Vào</th>
+                      <th className="num">Ra</th>
+                      <th>Thành công</th>
+                      <th className="num">Ước tính</th>
+                      <th className="num">Điểm</th>
+                      <th>Kiểm tra</th>
+                      <th className="num">Trọng số</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {members.map((m, i) => (
+                      <tr key={m.id} className={m.state === "active" ? undefined : "off"}>
+                        <td className="num">
+                          {/* Typing a number beats clicking the arrow eight times
+                              once a pool has more than a handful of members. */}
+                          <form action={actionSetPosition}>
                             <input type="hidden" name="poolId" value={pool.id} />
                             <input type="hidden" name="listingId" value={m.id} />
-                            <button style={btn} type="submit">×</button>
+                            <input
+                              className="pos"
+                              name="position"
+                              defaultValue={i + 1}
+                              title="gõ số rồi Enter để nhảy tới vị trí đó"
+                              style={i === 0 && m.state === "active" ? { color: "var(--ok)" } : undefined}
+                            />
                           </form>
-                        </span>
-                      </Td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        </td>
+                        <td>
+                          {/* Off keeps the member and its place; × removes it. */}
+                          <form action={actionToggleMember}>
+                            <input type="hidden" name="poolId" value={pool.id} />
+                            <input type="hidden" name="listingId" value={m.id} />
+                            <input type="hidden" name="enabled" value={m.state === "active" ? "0" : "1"} />
+                            <button
+                              className={`btn icon ${m.state === "active" ? "on" : "offbtn"}`}
+                              type="submit"
+                              title={m.state === "active" ? "tắt — giữ nguyên vị trí" : "bật lại"}
+                            >
+                              {m.state === "active" ? "on" : "off"}
+                            </button>
+                          </form>
+                        </td>
+                        <td>
+                          <Badge tone={m.platform === "vilao" ? "accent" : "neutral"}>{m.platform}</Badge>
+                        </td>
+                        <td className="faint">{m.seller ?? "—"}</td>
+                        <td className="mono">
+                          {m.display_name}
+                          {m.stale === 1 && <span style={{ color: "var(--warn)" }}> (cũ)</span>}
+                        </td>
+                        <td className="num mono">{vnd(m.price_in)}</td>
+                        <td className="num mono">{vnd(m.price_out)}</td>
+                        <td>{successCell(m, stats)}</td>
+                        <td className="num mono">{vnd(estimatedCost(m))} ₫</td>
+                        <td className="num mono faint" title="giá ước tính chia cho độ tin cậy">
+                          {(estimatedCost(m) / reliability(m, stats.get(m.id))).toFixed(1)}
+                        </td>
+                        <td>{probeCell(probes.get(m.id))}</td>
+                        <td className="num">
+                          <form action={actionSetWeight}>
+                            <input type="hidden" name="poolId" value={pool.id} />
+                            <input type="hidden" name="listingId" value={m.id} />
+                            <input className="w" name="weight" defaultValue={m.weight} />
+                          </form>
+                        </td>
+                        <td>
+                          <span style={{ display: "flex", gap: 4 }}>
+                            <Move poolId={pool.id} listingId={m.id} direction={-1} label="↑" />
+                            <Move poolId={pool.id} listingId={m.id} direction={1} label="↓" />
+                            <form action={actionMemberState}>
+                              <input type="hidden" name="poolId" value={pool.id} />
+                              <input type="hidden" name="listingId" value={m.id} />
+                              <input type="hidden" name="state" value="candidate" />
+                              <button className="btn icon danger" type="submit" title="bỏ khỏi pool">×</button>
+                            </form>
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
 
-            <details style={{ marginBottom: "0.8rem" }}>
-              <summary style={{ fontSize: "0.72rem", color: c.dim, cursor: "pointer" }}>
-                luật tự nhận thành viên {rule ? "· đang bật" : "· tắt"}
+            <details style={{ marginTop: 14 }}>
+              <summary>
+                Luật tự nhận thành viên {rule ? "· đang bật" : "· tắt"}
                 {queue.length > 0 && (
-                  <span style={{ color: c.warn }}> · {queue.length} chờ duyệt</span>
+                  <span style={{ color: "var(--warn)" }}> · {queue.length} chờ duyệt</span>
                 )}
               </summary>
-              <form action={actionSetRule} style={{ marginTop: "0.5rem" }}>
+              <form action={actionSetRule} className="card" style={{ marginTop: 8 }}>
                 <input type="hidden" name="poolId" value={pool.id} />
                 <textarea
                   name="ruleJson"
-                  rows={3}
+                  rows={2}
                   placeholder='{"platform":"ckey","search":"opus","maxPriceIn":500}'
                   defaultValue={rule ? JSON.stringify(rule.filter) : ""}
-                  style={{ ...input, width: "100%", fontFamily: "inherit", cursor: "text" }}
+                  style={{ width: "100%" }}
                 />
-                <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", marginTop: "0.4rem" }}>
-                  <label style={{ fontSize: "0.7rem", color: c.dim }}>
-                    <input type="checkbox" name="autoAdmit" value="1" defaultChecked={rule?.autoAdmit} />{" "}
-                    tự nhận thẳng (bỏ hàng chờ duyệt)
+                <div className="toolbar" style={{ marginTop: 8 }}>
+                  <label className="check">
+                    <input type="checkbox" name="autoAdmit" value="1" defaultChecked={rule?.autoAdmit} />
+                    tự nhận thẳng, bỏ hàng chờ duyệt
                   </label>
-                  <button style={btn} type="submit">lưu luật</button>
+                  <button className="btn" type="submit">Lưu luật</button>
                 </div>
               </form>
             </details>
 
             {queue.length > 0 && (
-              <div style={{ marginBottom: "0.8rem", fontSize: "0.74rem" }}>
-                <div style={{ color: c.warn, marginBottom: "0.3rem" }}>
-                  {queue.length} listing khớp luật, chờ bạn duyệt:
+              <>
+                <h2 className="section">{queue.length} listing khớp luật, chờ duyệt</h2>
+                <div className="tablewrap">
+                  {queue.slice(0, 14).map((q) => (
+                    <div className="queue-row" key={q.id}>
+                      <Badge tone="neutral">{q.platform}</Badge>
+                      <span className="who mono">{q.display_name}</span>
+                      <span className="faint mono">vào {vnd(q.price_in)}</span>
+                      <span style={{ minWidth: 96 }}>{probeCell(probes.get(q.id))}</span>
+                      <StateButton poolId={pool.id} listingId={q.id} state="active" label="Nhận" />
+                      <StateButton poolId={pool.id} listingId={q.id} state="blocked" label="Chặn" />
+                    </div>
+                  ))}
                 </div>
-                {queue.slice(0, 12).map((q) => (
-                  <div key={q.id} style={{ display: "flex", gap: "0.5rem", alignItems: "center", padding: "0.15rem 0" }}>
-                    <span style={{ minWidth: 300 }}>
-                      {q.platform} · {q.display_name} · in={vnd(q.price_in)}
-                    </span>
-                    <span style={{ minWidth: 110 }}>{probeCell(probes.get(q.id))}</span>
-                    <StateButton poolId={pool.id} listingId={q.id} state="active" label="nhận" />
-                    <StateButton poolId={pool.id} listingId={q.id} state="blocked" label="chặn" />
-                  </div>
-                ))}
-              </div>
+              </>
             )}
-
           </section>
         );
       })}
-    </main>
+    </Shell>
   );
 }
 
-/** Latest verify outcome for one listing: green with latency, or the failure. */
-function probeCell(probe: ReturnType<typeof lastProbes> extends Map<string, infer T> ? T | undefined : never) {
-  if (!probe) return <span style={{ color: c.dim }}>—</span>;
-  if (probe.status === "ok") {
-    return (
-      <span style={{ color: c.ok }} title={probe.created_at}>
-        ok {probe.latency_ms ? `${(probe.latency_ms / 1000).toFixed(1)}s` : ""}
-      </span>
-    );
+/** Published rate where a platform gives one; otherwise what we measured. */
+function successCell(m: PoolMember, stats: ReturnType<typeof measuredStats>) {
+  if (m.success_rate !== null) {
+    return <Badge tone={m.success_rate >= 95 ? "ok" : "warn"}>{m.success_rate.toFixed(1)}%</Badge>;
   }
+  const own = stats.get(m.id);
+  if (!own) return <span className="faint">chưa đo</span>;
+  const rate = (1 - own.failures / own.calls) * 100;
   return (
-    <span style={{ color: c.bad }} title={probe.created_at}>
-      {probe.error_code ?? "hỏng"}
-    </span>
+    <Badge tone={rate >= 95 ? "accent" : "bad"} title="gateway tự đo">
+      ~{rate.toFixed(0)}% · {own.calls}
+    </Badge>
   );
+}
+
+/** Latest verify outcome for one listing. */
+function probeCell(probe: { status: string; latency_ms: number | null; error_code: string | null } | undefined) {
+  if (!probe) return <span className="faint">—</span>;
+  if (probe.status === "ok") return <Badge tone="ok">{secs(probe.latency_ms)}</Badge>;
+  return <Badge tone="bad">{probe.error_code ?? "hỏng"}</Badge>;
 }
 
 function StateButton({
@@ -341,7 +337,7 @@ function StateButton({
       <input type="hidden" name="poolId" value={poolId} />
       <input type="hidden" name="listingId" value={listingId} />
       <input type="hidden" name="state" value={state} />
-      <button style={btn} type="submit">{label}</button>
+      <button className={`btn ${state === "active" ? "primary" : ""}`} type="submit">{label}</button>
     </form>
   );
 }
@@ -362,7 +358,7 @@ function Move({
       <input type="hidden" name="poolId" value={poolId} />
       <input type="hidden" name="listingId" value={listingId} />
       <input type="hidden" name="direction" value={direction} />
-      <button style={btn} type="submit">{label}</button>
+      <button className="btn icon" type="submit">{label}</button>
     </form>
   );
 }

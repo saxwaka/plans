@@ -43,6 +43,7 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
 export interface RunRow {
   id: string;
   attempt_no: number;
+  kind: string;
   pool_id: string | null;
   listing_id: string | null;
   platform: string;
@@ -62,7 +63,7 @@ export interface RunRow {
 export function recentRuns(limit = 50): RunRow[] {
   return getDb()
     .prepare<[number], RunRow>(
-      `SELECT id, attempt_no, pool_id, listing_id, platform, requested_model, actual_model, stream,
+      `SELECT id, attempt_no, kind, pool_id, listing_id, platform, requested_model, actual_model, stream,
               tokens_in, tokens_out, cost_vnd, ttfb_ms, latency_ms, status, error_code, created_at
          FROM run ORDER BY created_at DESC LIMIT ?`,
     )
@@ -82,19 +83,31 @@ export function spendToday(): {
   unpriced: number;
   /** Billed for attempts that produced nothing — what falling back costs. */
   wasted: number;
+  /** Verify sweeps. Real money, but not real traffic — they hammer dead
+   *  listings on purpose, so folding them into a success rate hides how the
+   *  gateway is actually serving requests. */
+  probes: number;
 } {
   const since = new Date();
   since.setHours(0, 0, 0, 0);
   const row = getDb()
     .prepare<
       [string],
-      { total: number | null; calls: number; failures: number; unpriced: number; wasted: number }
+      {
+        total: number | null;
+        calls: number;
+        failures: number;
+        unpriced: number;
+        wasted: number;
+        probes: number;
+      }
     >(
       `SELECT COALESCE(SUM(cost_vnd), 0) AS total,
               COUNT(*) AS calls,
               SUM(CASE WHEN status <> 'ok' THEN 1 ELSE 0 END) AS failures,
               SUM(CASE WHEN status = 'ok' AND cost_vnd IS NULL THEN 1 ELSE 0 END) AS unpriced,
-              COALESCE(SUM(CASE WHEN status <> 'ok' THEN cost_vnd ELSE 0 END), 0) AS wasted
+              COALESCE(SUM(CASE WHEN status <> 'ok' THEN cost_vnd ELSE 0 END), 0) AS wasted,
+              SUM(CASE WHEN kind = 'probe' THEN 1 ELSE 0 END) AS probes
          FROM run WHERE created_at >= ?`,
     )
     .get(since.toISOString())!;
@@ -104,6 +117,7 @@ export function spendToday(): {
     failures: row.failures ?? 0,
     unpriced: row.unpriced ?? 0,
     wasted: row.wasted ?? 0,
+    probes: row.probes ?? 0,
   };
 }
 
@@ -164,5 +178,18 @@ export function unpricedTotal(): number {
     getDb()
       .prepare("SELECT COUNT(*) AS n FROM run WHERE status = 'ok' AND cost_vnd IS NULL")
       .get() as { n: number }
+  ).n;
+}
+
+/** Failures that came from verify sweeps rather than from serving a client. */
+export function probeFailureCount(): number {
+  const since = new Date();
+  since.setHours(0, 0, 0, 0);
+  return (
+    getDb()
+      .prepare(
+        "SELECT COUNT(*) AS n FROM run WHERE kind = 'probe' AND status <> 'ok' AND created_at >= ?",
+      )
+      .get(since.toISOString()) as { n: number }
   ).n;
 }

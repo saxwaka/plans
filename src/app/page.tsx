@@ -1,117 +1,124 @@
 import { isModelMismatch } from "@/lib/gateway/modelname";
-import { Nav } from "./ui";
-import { recentRuns, spendToday } from "@/lib/gateway/runlog";
+import { probeFailureCount, recentRuns, spendToday } from "@/lib/gateway/runlog";
+import { Badge, Shell, Stat, secs, vnd } from "./ui";
 
 export const dynamic = "force-dynamic";
 
-const vnd = (n: number | null) =>
-  n === null ? "—" : n.toLocaleString("vi-VN", { maximumFractionDigits: 1 });
-
 export default function Dashboard() {
   const today = spendToday();
-  const runs = recentRuns(50);
+  const runs = recentRuns(60);
+  // Verify sweeps deliberately call listings that are down, so counting them
+  // here would report the gateway as failing when it is not.
+  const live = today.calls - today.probes;
+  const liveFailures = today.failures - probeFailureCount();
+  const okRate = live <= 0 ? null : ((live - liveFailures) / live) * 100;
 
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto" }}>
-      <Nav here="/" />
-
-      <section style={{ display: "flex", gap: "2.5rem", marginBottom: "2rem" }}>
+    <Shell here="/">
+      <div className="stats">
         <Stat
-          label={today.unpriced > 0 ? "Chi hôm nay (thiếu)" : "Chi hôm nay"}
-          value={`${vnd(today.total)} ₫`}
+          label="Chi hôm nay"
+          value={vnd(today.total)}
+          unit="₫"
+          // Never let the total look complete when it is not: an unreconciled
+          // Vilao call is counted but not yet priced.
+          hint={today.unpriced > 0 ? `chưa gồm ${today.unpriced} request chưa đối soát` : undefined}
+          tone={today.unpriced > 0 ? "warn" : undefined}
         />
-        <Stat label="Request" value={String(today.calls)} />
         <Stat
-          label="Hỏng"
-          value={String(today.failures)}
-          tone={today.failures > 0 ? "#ff6b6b" : undefined}
+          label="Request"
+          value={String(live)}
+          hint={today.probes > 0 ? `+ ${today.probes} lượt kiểm tra pool` : "hôm nay"}
         />
-        {/* Never let the total look complete when it is not: Vilao does not
-            report cost inline, so those calls are counted but not priced. */}
-        {today.unpriced > 0 && (
-          <Stat label="Chưa rõ giá" value={String(today.unpriced)} tone="#f0a202" />
-        )}
-        {/* Falling back is not free: a failed attempt can still be billed, since
-            CKey charges its per-call minimum whether or not anything came back. */}
-        {today.wasted > 0 && (
-          <Stat label="Lãng phí do fallback" value={`${vnd(today.wasted)} ₫`} tone="#f0a202" />
-        )}
-      </section>
+        <Stat
+          label="Thành công"
+          value={okRate === null ? "—" : `${okRate.toFixed(0)}%`}
+          hint={okRate === null ? "chưa có traffic thật" : "không tính lượt kiểm tra"}
+          tone={okRate !== null && okRate < 90 ? "bad" : "ok"}
+        />
+        {/* Falling back is not free: a failed attempt can still be billed. */}
+        <Stat
+          label="Lãng phí"
+          value={vnd(today.wasted)}
+          unit="₫"
+          hint="trả cho lần thử hỏng"
+          tone={today.wasted > 0 ? "warn" : undefined}
+        />
+      </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>
-        <thead>
-          <tr style={{ textAlign: "left", color: "#8b93a1" }}>
-            <Th>Lúc</Th><Th>Model</Th><Th>Kiểu</Th><Th>In</Th><Th>Out</Th>
-            <Th>Tiền</Th><Th>TTFB</Th><Th>Tổng</Th><Th>Kết quả</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {runs.length === 0 && (
+      <h2 className="section">Request gần đây</h2>
+      <div className="tablewrap scroll">
+        <table>
+          <thead>
             <tr>
-              <td colSpan={9} style={{ padding: "1.5rem 0", color: "#8b93a1" }}>
-                Chưa có request nào.
-              </td>
+              <th>Lúc</th>
+              <th>Model</th>
+              <th>Kiểu</th>
+              <th className="num">Vào</th>
+              <th className="num">Ra</th>
+              <th className="num">Tiền</th>
+              <th className="num">Đầu tiên</th>
+              <th className="num">Tổng</th>
+              <th>Kết quả</th>
             </tr>
-          )}
-          {runs.map((r) => (
-            <tr key={r.id} style={{ borderTop: "1px solid #23262e" }}>
-              <Td>{new Date(r.created_at).toLocaleTimeString("vi-VN")}</Td>
-              <Td>
-                {r.requested_model}
-                {/* A pool name resolving to one of its members is the whole point,
-                    so it is shown plainly. The warning colour is reserved for the
-                    case it was built for: a listing asked for by name that came
-                    back as something else. Base names are compared, since
-                    upstreams drop the seller prefix from what they return. */}
-                {r.pool_id
-                  ? r.actual_model && (
-                      <span style={{ color: "#8b93a1" }}> → {r.actual_model}</span>
-                    )
-                  : isModelMismatch(r.requested_model, r.actual_model) && (
-                      <span style={{ color: "#f0a202" }} title="người bán trả về model khác">
-                        {" "}
-                        → {r.actual_model}
+          </thead>
+          <tbody>
+            {runs.length === 0 && (
+              <tr>
+                <td className="empty" colSpan={9}>Chưa có request nào.</td>
+              </tr>
+            )}
+            {runs.map((r) => (
+              <tr key={r.id}>
+                <td className="mono faint">{new Date(r.created_at).toLocaleTimeString("vi-VN")}</td>
+                <td className="mono">
+                  {r.requested_model}
+                  {/* Only show what served when it is genuinely different. A pool
+                      resolving to a member is informative and reads plainly; a
+                      listing asked for by name that answered as something else is
+                      the warning this was built for. Dropping a seller prefix is
+                      neither, and printing it on every row is just noise. */}
+                  {isModelMismatch(r.requested_model, r.actual_model) &&
+                    (r.pool_id ? (
+                      <span className="faint"> → {r.actual_model}</span>
+                    ) : (
+                      <span style={{ color: "var(--warn)" }} title="người bán trả về model khác">
+                        {" "}→ {r.actual_model}
                       </span>
-                    )}
-              </Td>
-              <Td>
-                {r.stream ? "stream" : "sync"}
-                {r.attempt_no > 1 && (
-                  <span style={{ color: "#f0a202" }} title="lần thử fallback">
-                    {" "}#{r.attempt_no}
-                  </span>
-                )}
-              </Td>
-              <Td>{r.tokens_in ?? "—"}</Td>
-              <Td>{r.tokens_out ?? "—"}</Td>
-              <Td>{vnd(r.cost_vnd)}</Td>
-              <Td>{r.ttfb_ms ? `${r.ttfb_ms}ms` : "—"}</Td>
-              <Td>{r.latency_ms ? `${(r.latency_ms / 1000).toFixed(1)}s` : "—"}</Td>
-              <Td>
-                <span style={{ color: r.status === "ok" ? "#4ade80" : "#ff6b6b" }}>
-                  {r.status === "ok" ? "ok" : (r.error_code ?? r.status)}
-                </span>
-              </Td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </main>
+                    ))}
+                </td>
+                <td>
+                  {r.kind === "probe" ? (
+                    <Badge tone="neutral" title="lượt kiểm tra pool, không phải traffic thật">
+                      kiểm tra
+                    </Badge>
+                  ) : (
+                    <span className="faint">{r.stream ? "stream" : "sync"}</span>
+                  )}
+                  {r.attempt_no > 1 && (
+                    <>
+                      {" "}
+                      <Badge tone="warn" title="lần thử fallback">#{r.attempt_no}</Badge>
+                    </>
+                  )}
+                </td>
+                <td className="num mono">{r.tokens_in ?? "—"}</td>
+                <td className="num mono">{r.tokens_out ?? "—"}</td>
+                <td className="num mono">{vnd(r.cost_vnd)}</td>
+                <td className="num mono faint">{r.ttfb_ms ? `${r.ttfb_ms}ms` : "—"}</td>
+                <td className="num mono faint">{secs(r.latency_ms)}</td>
+                <td>
+                  {r.status === "ok" ? (
+                    <Badge tone="ok">ok</Badge>
+                  ) : (
+                    <Badge tone="bad">{r.error_code ?? r.status}</Badge>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Shell>
   );
 }
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div>
-      <div style={{ color: "#8b93a1", fontSize: "0.7rem" }}>{label}</div>
-      <div style={{ fontSize: "1.6rem", color: tone }}>{value}</div>
-    </div>
-  );
-}
-
-const Th = ({ children }: { children: React.ReactNode }) => (
-  <th style={{ padding: "0.4rem 0.6rem 0.4rem 0", fontWeight: 400 }}>{children}</th>
-);
-const Td = ({ children }: { children: React.ReactNode }) => (
-  <td style={{ padding: "0.4rem 0.6rem 0.4rem 0" }}>{children}</td>
-);

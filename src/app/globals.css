@@ -1,0 +1,187 @@
+/* ── Design tokens ─────────────────────────────────────────────────────────
+   Dark by default: this is an operator console that sits open all day next to
+   an editor, so it matches that context rather than fighting it. */
+:root {
+  --bg: #0a0c11;
+  --surface: #10131a;
+  --surface-2: #161a23;
+  --surface-3: #1c2130;
+  --border: #222736;
+  --border-strong: #303748;
+
+  --text: #e8ebf2;
+  --muted: #949cb0;
+  --faint: #626b80;
+
+  --accent: #7c8cff;
+  --accent-soft: #7c8cff1f;
+  --ok: #34d399;
+  --ok-soft: #34d3991a;
+  --warn: #fbbf24;
+  --warn-soft: #fbbf241a;
+  --bad: #f87171;
+  --bad-soft: #f871711a;
+
+  --r-sm: 6px;
+  --r: 9px;
+  --r-lg: 14px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .28);
+
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1100px 620px at 12% -12%, #171c2b 0%, transparent 62%),
+    var(--bg);
+  color: var(--text);
+  /* Be Vietnam Pro is drawn for Vietnamese, so diacritics stack correctly
+     instead of colliding the way they do in a monospace UI font. */
+  font-family: var(--font-sans), system-ui, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
+}
+
+/* Identifiers, prices and latencies stay monospaced so columns line up and
+   digits are comparable at a glance. Prose does not. */
+.mono, td.num, th.num, input, textarea, select, .badge {
+  font-family: var(--font-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-feature-settings: "tnum" 1;
+}
+
+.shell { max-width: 1420px; margin: 0 auto; padding: 0 28px 72px; }
+
+/* ── Nav ─────────────────────────────────────────────────────────────────── */
+.nav {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 4px;
+  margin: 0 -28px 26px; padding: 14px 28px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.nav .brand {
+  font-weight: 700; letter-spacing: -0.02em; margin-right: 20px;
+  display: flex; align-items: center; gap: 9px;
+}
+.nav .dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft);
+}
+.nav a {
+  color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 500;
+  padding: 6px 12px; border-radius: var(--r-sm); transition: background .13s, color .13s;
+}
+.nav a:hover { color: var(--text); background: var(--surface-2); }
+.nav a[aria-current] { color: var(--text); background: var(--surface-3); }
+
+/* ── Cards & stats ───────────────────────────────────────────────────────── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; margin-bottom: 26px; }
+.stat .label { font-size: 11.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+.stat .value { font-size: 27px; font-weight: 650; letter-spacing: -0.03em; margin-top: 3px; }
+.stat .hint { font-size: 11.5px; color: var(--faint); }
+
+h2.section {
+  font-size: 12px; font-weight: 700; color: var(--faint);
+  text-transform: uppercase; letter-spacing: .07em;
+  margin: 30px 0 10px;
+}
+
+/* ── Tables ──────────────────────────────────────────────────────────────── */
+.tablewrap { border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; background: var(--surface); }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+thead th {
+  text-align: left; font-weight: 600; font-size: 11px; color: var(--faint);
+  text-transform: uppercase; letter-spacing: .05em;
+  padding: 11px 14px; background: var(--surface-2);
+  border-bottom: 1px solid var(--border); white-space: nowrap;
+}
+tbody td { padding: 9px 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent); white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr { transition: background .1s; }
+tbody tr:hover { background: var(--surface-2); }
+tr.off { opacity: .42; }
+td.num, th.num { text-align: right; }
+td.empty { color: var(--faint); text-align: center; padding: 34px 0; }
+
+/* ── Controls ────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  padding: 6px 11px; font-size: 12.5px; font-weight: 500;
+  cursor: pointer; transition: background .13s, border-color .13s, transform .05s;
+  font-family: inherit; white-space: nowrap;
+}
+.btn:hover { background: var(--surface-3); border-color: #3d4658; }
+.btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0a0c11; font-weight: 650; }
+.btn.primary:hover { background: #8f9dff; }
+.btn.danger { color: var(--bad); }
+.btn.icon { padding: 5px 8px; min-width: 30px; }
+.btn.on { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 40%, var(--border-strong)); background: var(--ok-soft); }
+.btn.offbtn { color: var(--faint); }
+
+input, textarea, select {
+  background: var(--surface-2); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: var(--r-sm);
+  padding: 6px 10px; font-size: 12.5px; outline: none;
+  transition: border-color .13s, box-shadow .13s;
+}
+input:focus, textarea:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+input::placeholder { color: var(--faint); }
+input.pos { width: 42px; text-align: center; padding: 5px 4px; }
+input.w { width: 46px; text-align: center; padding: 5px 4px; }
+
+label.check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted); cursor: pointer; }
+label.check input { accent-color: var(--accent); }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+/* ── Badges ──────────────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.badge.ok { color: var(--ok); background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 26%, transparent); }
+.badge.warn { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 26%, transparent); }
+.badge.bad { color: var(--bad); background: var(--bad-soft); border-color: color-mix(in srgb, var(--bad) 26%, transparent); }
+.badge.neutral { color: var(--muted); background: var(--surface-3); border-color: var(--border-strong); }
+.badge.accent { color: var(--accent); background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 26%, transparent); }
+
+.muted { color: var(--muted); }
+.faint { color: var(--faint); }
+.note { font-size: 12.5px; color: var(--muted); line-height: 1.7; }
+.note em { color: var(--text); font-style: normal; font-weight: 600; }
+
+/* ── Pool block ──────────────────────────────────────────────────────────── */
+.pool { margin-bottom: 34px; }
+.poolhead { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.poolhead .name { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+.queue-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 14px; border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  font-size: 12.5px;
+}
+.queue-row:last-child { border-bottom: none; }
+.queue-row .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+details summary { cursor: pointer; font-size: 12.5px; color: var(--muted); list-style: none; padding: 4px 0; }
+details summary::-webkit-details-marker { display: none; }
+details summary::before { content: "▸ "; color: var(--faint); }
+details[open] summary::before { content: "▾ "; }
