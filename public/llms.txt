@@ -1,0 +1,23 @@
+# LLM Gateway
+
+> OpenAI- and Anthropic-compatible HTTP gateway in front of the Vilao and CKey LLM marketplaces.
+> Routes each request to the best seller listing, falls back on failure, and reports cost in VND.
+
+- Base URL (OpenAI SDKs): http://HOST:3000/v1
+- Base URL (Anthropic SDKs, Claude Code): http://HOST:3000
+- Auth: `Authorization: Bearer gw-...` or `x-api-key: gw-...` (gateway-issued key)
+- The `model` field is a POOL NAME. Discover pools with GET /v1/models (owned_by == "gateway").
+
+## Docs
+
+- [API reference](/docs): every endpoint, real request/response examples, error codes, routing behaviour
+- [OpenAPI 3.1](/openapi.yaml): machine-readable schema
+
+## Key facts
+
+- Endpoints: /v1/chat/completions, /v1/messages, /v1/embeddings, /v1/completions, /v1/responses, /v1/moderations, /v1/rerank, /v1/models
+- Every `usage` object gains `cost`, `cost_currency: "VND"`, `cost_source: upstream|estimated|floor`
+- Response headers: X-Gateway-Pool, X-Gateway-Listing, X-Gateway-Attempts
+- Streaming: usage arrives in a frame with `"choices": []`; end on `[DONE]` / `message_stop`
+- 404 is retried across sellers; 400/401/413/422 are not
+- Set client timeout >= 120s

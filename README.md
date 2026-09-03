@@ -139,6 +139,17 @@ Dashboard ở `http://localhost:3000`. Tạo pool ở `/pools`, thêm thành vi�
 
 Bỏ trống `VILAO_API_KEY` và `VILAO_PAT` thì gateway chạy thuần CKey, không lỗi.
 
+### Tài liệu cho app khác tích hợp
+
+| | |
+|---|---|
+| `/docs` | tham chiếu API đầy đủ, ví dụ là response thật |
+| `/openapi.yaml` | schema OpenAPI 3.1 cho máy đọc |
+| `/llms.txt` | điểm vào cho AI agent, theo quy ước llms.txt |
+
+Nguồn: `docs/API.md`, `public/openapi.yaml`, `public/llms.txt`. Viết bằng tiếng Anh vì
+đối tượng đọc là SDK và agent ở dự án khác.
+
 ### Chi phí trong response
 
 Mọi response (cả stream) có thêm vào `usage`:

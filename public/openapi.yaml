@@ -1,0 +1,201 @@
+openapi: 3.1.0
+info:
+  title: LLM Gateway
+  version: "1.0"
+  description: |
+    OpenAI- and Anthropic-compatible gateway in front of the Vilao and CKey marketplaces.
+    The `model` field is a pool name (preferred) or a raw seller listing id (passthrough).
+    Every `usage` object gains `cost`, `cost_currency` and `cost_source`.
+    Full prose reference with real examples: /docs
+servers:
+  - url: http://localhost:3000/v1
+    description: OpenAI-family endpoints
+  - url: http://localhost:3000
+    description: Root — for Anthropic SDKs, which append /v1 themselves
+security:
+  - bearer: []
+  - apiKey: []
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer, description: "Authorization: Bearer gw-..." }
+    apiKey: { type: apiKey, in: header, name: x-api-key, description: "x-api-key: gw-..." }
+  headers:
+    X-Gateway-Pool:     { schema: { type: string }, description: Pool that routed the request; absent on passthrough }
+    X-Gateway-Listing:  { schema: { type: string }, description: "Listing that actually served, e.g. vilao:<provider>:<model> or ckey:<seller>/<model>" }
+    X-Gateway-Attempts: { schema: { type: integer, minimum: 1 }, description: Members tried; >1 means a fallback happened }
+  schemas:
+    CostFields:
+      type: object
+      description: Added by the gateway to every `usage` object, including the usage frame of a stream.
+      properties:
+        cost: { type: number, description: VND for this call }
+        cost_currency: { type: string, enum: [VND] }
+        cost_source:
+          type: string
+          enum: [upstream, estimated, floor]
+          description: |
+            upstream — seller reported it (authoritative).
+            estimated — computed from listing prices as max(min_charge, per_request + tokens/1e6 × price).
+            floor — no token counts available; only the minimum charge is known (lower bound).
+    OpenAIError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message: { type: string }
+            type: { type: string }
+            code: { type: string }
+    AnthropicError:
+      type: object
+      properties:
+        type: { type: string, enum: [error] }
+        error:
+          type: object
+          properties: { type: { type: string }, message: { type: string } }
+    Model:
+      type: object
+      properties:
+        id: { type: string, description: Pool name or listing id — use as `model` }
+        object: { type: string, enum: [model] }
+        created: { type: integer }
+        owned_by: { type: string, description: '"gateway" for pools; "ckey" or "vilao" for raw listings' }
+        gateway:
+          type: object
+          description: Gateway extension.
+          properties:
+            kind: { type: string, enum: [pool, listing] }
+            members: { type: integer }
+            strategy: { type: string, enum: [failover, cheapest, round-robin, weighted, pinned] }
+            seller: { type: [string, "null"] }
+            price_in: { type: [number, "null"], description: VND per 1M input tokens }
+  responses:
+    Unauthorized:
+      description: Missing or unknown gateway key
+      content: { application/json: { schema: { $ref: "#/components/schemas/OpenAIError" },
+                 example: { error: { message: Invalid API key., type: authentication_error, code: invalid_api_key } } } }
+    BudgetExhausted:
+      description: Pool daily/monthly cap reached — back off, alert operator
+      content: { application/json: { schema: { $ref: "#/components/schemas/OpenAIError" },
+                 example: { error: { message: "Trần ngày 3₫ đã dùng hết (4₫).", type: insufficient_quota, code: budget_exhausted } } } }
+    EmptyPool:
+      description: Pool has no active members, or no member is under the per-request price cap
+      content: { application/json: { schema: { $ref: "#/components/schemas/OpenAIError" },
+                 example: { error: { message: 'Pool "empty-pool" has no active members.', type: invalid_request_error, code: empty_pool } } } }
+    AllFailed:
+      description: Every pool member failed; message lists each failure
+      content: { application/json: { schema: { $ref: "#/components/schemas/OpenAIError" } } }
+paths:
+  /models:
+    get:
+      summary: List pools and raw listings
+      description: Pools first (owned_by "gateway"), then raw listings. Prefer gateway.kind == "pool".
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object: { type: string, enum: [list] }
+                  data: { type: array, items: { $ref: "#/components/schemas/Model" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /chat/completions:
+    post:
+      summary: OpenAI Chat Completions
+      description: "Standard OpenAI payload. Tool calling and image_url verified. Set stream: true for SSE."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messages]
+              properties:
+                model: { type: string, description: Pool name or listing id. Defaults to the operator's configured listing. }
+                messages: { type: array, items: { type: object } }
+                stream: { type: boolean }
+                max_tokens: { type: integer }
+                tools: { type: array, items: { type: object } }
+              additionalProperties: true
+            example: { model: cheap, messages: [ { role: user, content: Say hello in one word. } ], max_tokens: 8 }
+      responses:
+        "200":
+          description: Chat completion (JSON) or text/event-stream when `stream` is true. `usage` includes CostFields. `model` is the upstream's bare name, not the pool.
+          headers:
+            X-Gateway-Pool: { $ref: "#/components/headers/X-Gateway-Pool" }
+            X-Gateway-Listing: { $ref: "#/components/headers/X-Gateway-Listing" }
+            X-Gateway-Attempts: { $ref: "#/components/headers/X-Gateway-Attempts" }
+          content:
+            application/json:
+              example:
+                id: chatcmpl-a11e0d42e8ad423ca4a873732a18e857
+                object: chat.completion
+                created: 1788454181
+                model: deepseek-v4-flash
+                choices: [ { index: 0, finish_reason: stop, message: { role: assistant, content: Hello! } } ]
+                usage: { prompt_tokens: 873, completion_tokens: 3, total_tokens: 876, cost: 5, cost_currency: VND, cost_source: estimated }
+            text/event-stream:
+              description: 'data: {json} frames; usage arrives in a frame with "choices": []; ends with data: [DONE]'
+        "400": { description: "Malformed request (not retried across sellers)", content: { application/json: { schema: { $ref: "#/components/schemas/OpenAIError" } } } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "402": { $ref: "#/components/responses/BudgetExhausted" }
+        "404": { description: "Passthrough listing not found upstream, or unknown endpoint" }
+        "409": { $ref: "#/components/responses/EmptyPool" }
+        "502": { $ref: "#/components/responses/AllFailed" }
+  /messages:
+    post:
+      summary: Anthropic Messages
+      description: |
+        Standard Anthropic payload; send x-api-key and anthropic-version. Both platforms serve this natively.
+        Errors use the Anthropic envelope. Anthropic SDKs should use the ROOT base URL (no /v1).
+      parameters:
+        - { in: header, name: anthropic-version, schema: { type: string }, example: "2023-06-01" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, required: [messages, max_tokens], additionalProperties: true,
+                      properties: { model: { type: string }, max_tokens: { type: integer }, messages: { type: array }, stream: { type: boolean } } }
+      responses:
+        "200":
+          description: Anthropic message, `usage` includes CostFields. Streams emit the standard event sequence.
+          content:
+            application/json:
+              example:
+                id: chatcmpl-RQOh0QSXygKylj4om2WLjW7A
+                type: message
+                role: assistant
+                model: deepseek-v4-flash
+                content: [ { type: text, text: Hi! How can I help you today } ]
+                stop_reason: max_tokens
+                usage: { input_tokens: 869, output_tokens: 8, cost: 5, cost_currency: VND, cost_source: estimated }
+        "401": { description: Bad key, content: { application/json: { schema: { $ref: "#/components/schemas/AnthropicError" } } } }
+        "402": { $ref: "#/components/responses/BudgetExhausted" }
+        "409": { $ref: "#/components/responses/EmptyPool" }
+  /embeddings:
+    post:
+      summary: OpenAI Embeddings
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [input], additionalProperties: true,
+                   properties: { model: { type: string }, input: { oneOf: [ { type: string }, { type: array } ] } } },
+                   example: { model: embed, input: hello } } }
+      responses:
+        "200":
+          content:
+            application/json:
+              example:
+                object: list
+                model: text-embedding-3-small
+                data: [ { object: embedding, index: 0, embedding: [0.0167, -0.0557, 0.0056] } ]
+                usage: { prompt_tokens: 1, total_tokens: 1, cost: 3, cost_currency: VND, cost_source: estimated }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /completions:
+    post: { summary: OpenAI legacy Completions (passthrough), requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { "200": { description: Passthrough; usage gains CostFields } } }
+  /responses:
+    post: { summary: OpenAI Responses API (passthrough), requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { "200": { description: Passthrough; usage gains CostFields } } }
+  /moderations:
+    post: { summary: OpenAI Moderations (CKey listings only), requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { "200": { description: Passthrough } } }
+  /rerank:
+    post: { summary: Rerank (CKey listings only), requestBody: { required: true, content: { application/json: { schema: { type: object, additionalProperties: true } } } }, responses: { "200": { description: Passthrough } } }
