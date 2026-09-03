@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { syncAll } from "@/lib/gateway/catalog";
 import { reconcileVilao } from "@/lib/gateway/reconcile";
 import { applyRules } from "@/lib/gateway/rules";
+import { verifyPool } from "@/lib/gateway/verify";
 import { setMemberState, setRule } from "@/lib/gateway/pool";
 import { loadConfig } from "@/lib/gateway/config";
 import {
@@ -96,4 +97,12 @@ export async function actionMemberState(formData: FormData) {
     String(formData.get("state")),
   );
   revalidatePath("/pools");
+}
+
+export async function actionVerifyPool(formData: FormData) {
+  await verifyPool(loadConfig(), String(formData.get("poolId")), {
+    includeCandidates: formData.get("includeCandidates") === "1",
+  });
+  revalidatePath("/pools");
+  revalidatePath("/usage");
 }

@@ -13,8 +13,8 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
          id, client_key_id, pool_id, listing_id, platform, attempt_no,
          requested_model, actual_model, stream, tokens_in, tokens_out, cost_vnd,
          ttfb_ms, latency_ms, status, error_code, http_status,
-         upstream_request_id, created_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         upstream_request_id, kind, created_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       randomUUID(),
@@ -35,6 +35,7 @@ export function recordRun(clientKeyId: string | null, outcome: CallOutcome): voi
       outcome.errorCode ?? null,
       outcome.httpStatus ?? null,
       outcome.upstreamRequestId ?? null,
+      outcome.kind ?? "live",
       new Date().toISOString(),
     );
 }

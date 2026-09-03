@@ -299,6 +299,16 @@ Chúng **không** hiểu ba thứ riêng của hai sàn này: Vilao bắt **subs
 
 Ba thứ đó là §4b, §4c và toàn bộ khái niệm pool. Bỏ chúng đi thì nên dùng LiteLLM.
 
+## 10b. Kiểm tra pool (thêm sau M6, theo yêu cầu)
+
+Một lệnh quét gọi thử toàn bộ thành viên và hàng chờ duyệt của pool, đo sống/chết
+và độ trễ. Nó gỡ đúng chỗ bí của §4c: listing CKey phải chờ traffic thật mới có
+dữ liệu, mà traffic thật thì không muốn dùng để thí nghiệm.
+
+Vẫn giữ nguyên tắc **không tự bắn thử theo lịch** — chỉ chạy khi người dùng bấm,
+và **luôn báo giá trước**. Vì đo thật cho thấy probe không hề rẻ: token tốn
+0.0002₫ nhưng thực trả 5–72₫ do sàn tối thiểu quyết định.
+
 ## 11. Bước kế tiếp
 
 Bắt đầu M1 theo `plans/m1-duong-ong.md`.

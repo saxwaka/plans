@@ -17,6 +17,8 @@ const ADDITIONS: [table: string, column: string, definition: string][] = [
   ["run", "reconciled_from", "TEXT"],
   ["pool", "rule_json", "TEXT"],
   ["pool", "auto_admit", "INTEGER NOT NULL DEFAULT 0"],
+  // 'live' for real traffic, 'probe' for a verify run — same evidence, different money.
+  ["run", "kind", "TEXT NOT NULL DEFAULT 'live'"],
 ];
 
 function migrate(handle: Database.Database): void {

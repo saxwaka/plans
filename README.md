@@ -50,6 +50,32 @@ mà nó có thể hỏng đúng request bạn cần. Nên listing chưa kiểm c
 không thấy gì. Khi streaming, chúng bị đẩy xuống sau các listing đã biết.
 Gateway **không bao giờ tự bắn thử** để học — chỉ học từ request bạn thật sự cần.
 
+### Kiểm tra pool
+
+Nút **kiểm tra pool** gọi thật một request `max_tokens=1` tới **mọi** thành viên
+và mọi listing đang chờ duyệt, 4 cái song song, rồi ghi kết quả: sống/chết, độ
+trễ, chi phí. Kết quả hiện ngay cạnh từng listing — kể cả trong hàng chờ duyệt,
+nên bạn duyệt dựa trên bằng chứng chứ không phải đoán.
+
+**Nó tốn tiền thật, và không rẻ như tên gọi gợi ý.** Đo trên pool 18 listing:
+phần token chỉ 0.0002₫, nhưng thực trả 5–72₫ mỗi listing vì giá tính
+`max(sàn, per_request + token)` — request bé thì **sàn quyết định tất**. Vì vậy
+nút luôn báo giá trước khi bấm. Con số đó là **cận trên**: listing hỏng không bị
+tính tiền, nên lần đo thật 18 listing báo 338₫ mà chỉ trả 207₫.
+
+Kết quả một lần chạy thật, cho thấy vì sao tính năng này đáng có:
+
+```
+13/18 sống · độ trễ từ 2.7s đến 17.3s
+rẻ nhất & nhanh: phongnguyenpha/gpt-5.6-luna   2₫   5.0s
+đắt nhất & chậm nhất: thanhnhan9023/...-cheap  72₫  17.3s   ← tên là "cheap"
+chết: 2 api_error, 3 timeout (45s)
+```
+
+Probe được ghi vào log như request thường nhưng gắn `kind='probe'` — vẫn tính
+vào độ tin cậy vì đó là bằng chứng thật, nhưng tách được khỏi chi tiêu thật.
+Gateway **không bao giờ tự chạy** việc này theo lịch; chỉ chạy khi bạn bấm.
+
 ### Pool theo luật
 
 Lưu một bộ filter vào pool; sau mỗi lần sync, listing mới khớp luật sẽ vào

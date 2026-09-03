@@ -8,6 +8,8 @@ export interface CallOutcome {
   poolId?: string | null;
   /** 1 for the first member tried; higher values are fallback attempts. */
   attemptNo?: number;
+  /** 'live' for a client's request, 'probe' for a verify sweep. */
+  kind?: "live" | "probe";
   requestedModel: string;
   actualModel?: string;
   stream: boolean;

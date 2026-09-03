@@ -7,6 +7,7 @@ import {
   actionSetRule,
   actionSetWeight,
   actionUpdatePool,
+  actionVerifyPool,
   syncCatalog,
 } from "../actions";
 import { poolSpend } from "@/lib/gateway/budget";
@@ -14,6 +15,7 @@ import { estimatedCost, reliability } from "@/lib/gateway/routing";
 import { btn, c, input, Nav, Td, Th, vnd } from "../ui";
 import { candidates, getRule, listPools, poolMembers } from "@/lib/gateway/pool";
 import { measuredStats } from "@/lib/gateway/stats";
+import { lastProbes, verifyEstimate } from "@/lib/gateway/verify";
 import { countAll } from "@/lib/gateway/filter";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +66,8 @@ export default function Pools() {
         const spend = poolSpend(pool.id);
         const rule = getRule(pool.id);
         const queue = candidates(pool.id);
+        const probes = lastProbes(pool.id);
+        const estimate = verifyEstimate(pool.id, true);
         return (
           <section key={pool.id} style={{ marginBottom: "2.5rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", marginBottom: "0.6rem" }}>
@@ -71,6 +75,24 @@ export default function Pools() {
               <span style={{ color: c.dim, fontSize: "0.72rem" }}>
                 {pool.strategy} · {members.length} thành viên
               </span>
+              <form action={actionVerifyPool} style={{ display: "flex", gap: "0.4rem", alignItems: "center" }}>
+                <input type="hidden" name="poolId" value={pool.id} />
+                <input type="hidden" name="includeCandidates" value="1" />
+                <button style={btn} type="submit" disabled={estimate.members === 0}>
+                  kiểm tra pool
+                </button>
+                {/* Quote the price first. A one-token probe is not a cheap probe:
+                    billing is max(floor, per-request + tokens), so a sweep costs
+                    the sum of the members' floors, not a rounding error. It is an
+                    upper bound — a listing that fails is not billed, and a measured
+                    sweep of 18 came to 207₫ against a 338₫ quote. */}
+                <span
+                  style={{ fontSize: "0.7rem", color: c.warn }}
+                  title="Gọi thật, tốn tiền thật. Listing hỏng thì không bị tính, nên số thực trả thường thấp hơn."
+                >
+                  {estimate.members} listing · tối đa {vnd(estimate.cost)}₫
+                </span>
+              </form>
               <form action={actionDeletePool}>
                 <input type="hidden" name="poolId" value={pool.id} />
                 <button style={{ ...btn, color: c.bad }} type="submit">xoá pool</button>
@@ -149,6 +171,7 @@ export default function Pools() {
                     <span style={{ minWidth: 300 }}>
                       {q.platform} · {q.display_name} · in={vnd(q.price_in)}
                     </span>
+                    <span style={{ minWidth: 110 }}>{probeCell(probes.get(q.id))}</span>
                     <StateButton poolId={pool.id} listingId={q.id} state="active" label="nhận" />
                     <StateButton poolId={pool.id} listingId={q.id} state="blocked" label="chặn" />
                   </div>
@@ -166,7 +189,7 @@ export default function Pools() {
                   <tr style={{ textAlign: "left", color: c.dim }}>
                     <Th>#</Th><Th>Sàn</Th><Th>Người bán</Th><Th>Model</Th>
                     <Th>In</Th><Th>Out</Th><Th>/req</Th><Th>Success</Th><Th>Request</Th>
-                    <Th>Ước tính</Th><Th>Điểm</Th><Th>W</Th><Th />
+                    <Th>Ước tính</Th><Th>Điểm</Th><Th>Kiểm tra</Th><Th>W</Th><Th />
                   </tr>
                 </thead>
                 <tbody>
@@ -209,6 +232,7 @@ export default function Pools() {
                           {(estimatedCost(m) / reliability(m, stats.get(m.id))).toFixed(1)}
                         </span>
                       </Td>
+                      <Td>{probeCell(probes.get(m.id))}</Td>
                       <Td>
                         <form action={actionSetWeight} style={{ display: "flex", gap: 2 }}>
                           <input type="hidden" name="poolId" value={pool.id} />
@@ -236,6 +260,23 @@ export default function Pools() {
         );
       })}
     </main>
+  );
+}
+
+/** Latest verify outcome for one listing: green with latency, or the failure. */
+function probeCell(probe: ReturnType<typeof lastProbes> extends Map<string, infer T> ? T | undefined : never) {
+  if (!probe) return <span style={{ color: c.dim }}>—</span>;
+  if (probe.status === "ok") {
+    return (
+      <span style={{ color: c.ok }} title={probe.created_at}>
+        ok {probe.latency_ms ? `${(probe.latency_ms / 1000).toFixed(1)}s` : ""}
+      </span>
+    );
+  }
+  return (
+    <span style={{ color: c.bad }} title={probe.created_at}>
+      {probe.error_code ?? "hỏng"}
+    </span>
   );
 }
 
