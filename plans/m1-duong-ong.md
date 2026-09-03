@@ -77,7 +77,17 @@ Xong khi: chạy `curl -N` thấy chữ ra dần, không ra một cục.
 ### T6 — Ghi log request
 Mỗi request ghi một dòng `run`: model, tokens, `cost_vnd` lấy từ `usage.x_ckey.cost`, `latency_ms`, `ttfb_ms`, `status`, `stream`.
 
-Với stream, `usage` nằm ở **chunk cuối** — phải bóc ra từ dòng SSE cuối trước `[DONE]`, đừng bỏ sót.
+**Tin tốt, đã kiểm chứng bằng request thật:** CKey gửi `usage` kèm `x_ckey.cost` **ngay trong stream mà không cần gửi `stream_options.include_usage`**. Chunk áp chót có dạng:
+
+```
+data: {"choices":[],"usage":{"completion_tokens":4,"prompt_tokens":6,"total_tokens":10,
+       "x_ckey":{"cost":23.4,"request_id":"req_c3d3..."}}}
+data: [DONE]
+```
+
+Nên chỉ việc bóc dòng SSE ngay trước `[DONE]`. Lưu ý chunk đó có `"choices":[]` rỗng — chuyển tiếp nguyên vẹn, đừng lọc bỏ.
+
+Ghi DB **sau khi stream xong**, đừng ghi giữa chừng — `better-sqlite3` là đồng bộ, sẽ chặn event loop.
 
 Xong khi: gọi 5 lần, `SELECT * FROM run` ra đủ 5 dòng có tiền thật.
 
@@ -105,13 +115,13 @@ Rút từ khảo sát, không phải phòng xa chung chung:
 | Timeout quá ngắn | **40 giây** cho 104 token output | Timeout ≥ 120s. Tách ngưỡng chunk-đầu và ngưỡng tổng |
 | Nhầm 503 là sàn sập | CKey trả **503 cho mọi path lạ** | Đừng dùng 503 làm tín hiệu health |
 | Ước tính tiền theo độ dài prompt | Prompt 15 token phồng thành **914** (891 cached) | Chỉ tin `usage` trả về |
-| Bỏ sót `usage` khi stream | `usage` chỉ có ở chunk cuối | Bóc từ dòng SSE cuối trước `[DONE]` |
+| Bỏ sót `usage` khi stream | Đã kiểm chứng: có sẵn, không cần `stream_options` | Bóc dòng SSE ngay trước `[DONE]` |
 | Giá đổi giữa chừng | Một listing thêm `min_charge` sau vài giờ | Đọc `x_ckey.cost`, đừng tự tính lại |
 | Công thức giá sai | Request nhỏ bị **sàn quyết định**, không phải token | `max(sàn, per_request + token/1e6 × giá)` |
 
 ## Cố tình chưa làm ở M1
 
-Pool · filter · định tuyến · fallback · Vilao · auto-subscribe · giữ chunk đầu · ảnh/video · trần chi tiêu · học chất lượng.
+Pool · filter · định tuyến · fallback · Vilao · auto-subscribe · giữ chunk đầu · trần chi tiêu · học chất lượng.
 
 Có một cái đáng nói: **M1 chưa có fallback, nên listing hỏng là request hỏng.** Chấp nhận được, vì mục tiêu M1 là kiểm chứng đường ống chứ không phải độ bền. Nhưng hãy gọi cứng một listing **đã kiểm chứng** (`dungcsnd113/claude-opus-5` đã chạy thật), đừng chọn listing rẻ nhất chưa biết ra sao.
 
@@ -121,9 +131,10 @@ Có một cái đáng nói: **M1 chưa có fallback, nên listing hỏng là req
 
 ## Sau M1
 
-M2 làm hai việc song song được: catalog + filter, và `/v1/messages` (đang rẻ vì còn thuần CKey). Rồi M3 pool.
+M2 làm ba việc: catalog, filter, và `/v1/messages` (đang rẻ vì còn thuần CKey). Rồi M3 pool.
+
+Ảnh và video **đã bỏ khỏi phạm vi** — xem §1 của kế hoạch tổng.
 
 ## Còn treo, không chặn M1
 
-- Thử một model video (`veo-3.1-lite`, 200 VND, thành công 66%) — chỉ ảnh hưởng M7
 - **Thu hồi PAT Vilao** ở `/console/user/api-tokens`; nó full quyền gồm cả ví tiền, và đã nằm trong transcript session
