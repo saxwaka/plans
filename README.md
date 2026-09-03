@@ -138,6 +138,29 @@ Dashboard ở `http://localhost:3000`. Tạo pool ở `/pools`, thêm thành vi�
 
 Bỏ trống `VILAO_API_KEY` và `VILAO_PAT` thì gateway chạy thuần CKey, không lỗi.
 
+### Dùng từ app / SDK / web khác
+
+Gateway là endpoint OpenAI-compatible thật — đã kiểm chứng bằng SDK `openai` chính
+thức: list models, non-stream, stream, **tool calling** đều chạy qua pool.
+
+```ts
+import OpenAI from "openai";
+const client = new OpenAI({ baseURL: "http://localhost:3000/v1", apiKey: "gw-..." });
+await client.chat.completions.create({ model: "cheap", messages: [...] });
+//                                            ^ tên pool là tên model
+```
+
+Mỗi app một key: `npm run key:create <tên-app>` — để trang Chi tiêu tách được ai
+tiêu bao nhiêu.
+
+**Web chạy trong trình duyệt** gọi thẳng vào được — CORS đã mở (`GATEWAY_CORS_ORIGINS`,
+mặc định `*`). Nhưng nghĩ kỹ trước khi làm: key gateway sẽ **nằm trong JS của trang**,
+ai mở trang cũng lấy được. Ổn khi gateway chỉ ở localhost; nếu đưa ra mạng thì nên
+để backend của bạn gọi gateway thay vì trình duyệt, hoặc thu hẹp `GATEWAY_CORS_ORIGINS`.
+
+**Máy khác trong mạng** gọi được — `next start` lắng nghe mọi interface. Chỉ có key
+gateway bảo vệ, không có TLS. Đừng mở port ra internet.
+
 ### Trỏ Claude Code vào
 
 ```bash
